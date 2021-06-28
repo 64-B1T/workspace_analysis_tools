@@ -202,7 +202,7 @@ class WorkspaceCommandLine:
         link = RobotLink(arm)
 
         def get_ee():
-            return link.robot.getJointTransforms()[-1]
+            return link.robot.getEEPos()
 
         def do_fk(x):
             return (link.robot.FK(x), True)
@@ -216,8 +216,8 @@ class WorkspaceCommandLine:
         link.bind_fk(do_fk)
         link.bind_ik(do_ik)
         link.bind_jt(get_jt)
-        link.joint_mins = link.robot.jointMins
-        link.joint_maxs = link.robot.jointMaxs
+        link.joint_mins = link.robot.joint_mins
+        link.joint_maxs = link.robot.joint_maxs
         return link
 
     def cmd_schedule_sequence(self):
@@ -441,7 +441,7 @@ class WorkspaceCommandLine:
         -pose: pose of the object. TAA such as [x,y,z,xr,yr,zr]. M/Rad. No spaces. Default identity
         -manipulationResolution: number of points in manipulation unit sphere. Default 25
         -checkCollisions: make sure no part of the arm intersects the object. Default True
-        -exemptEE: excemt the end effector of the robot from collision checking. Default True
+        -exemptEE: exempt the end effector of the robot from collision checking. Default True
         -parallel: run in parallel for increased efficiency. Default False.
         -useJacobian: uses jacobian instead of unit sphere manipulability.
             Incompatible with pose checking

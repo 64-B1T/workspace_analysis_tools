@@ -123,8 +123,11 @@ class RobotLink:
         """
         return self.JTFunc()
 
+    def jacobianBody(self, theta):
+        return self.get_jacobian_body(theta)
+
     def get_jacobian_body(self, theta):
         """
         Temporary Hack, Dependent on Faser Robotics Lib
         """
-        return self.robot.JacobianBody(theta)
+        return self.robot.jacobianBody(theta)

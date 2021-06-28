@@ -171,7 +171,7 @@ def chunk_moller_trumbore(test_points, triangles, epsilon_vector,
                                                      triangles[i, :],
                                                      epsilon_vector)
         # where res == True
-        result_array[np.where(res==True)] += 1
+        result_array[np.where(res)] += 1
     return result_array
 def inside_alpha_shape(shape, points, check_bounds=True):
     """
@@ -240,7 +240,7 @@ def inside_alpha_shape(shape, points, check_bounds=True):
         res = moller_trumbore_ray_intersection_array(
             points, tri, np.array([EPSILON, 0, 10 - EPSILON]))
         # where res == true
-        num_intersections[np.where(res==True)] += 1
+        num_intersections[np.where(res)] += 1
 
     #print(np.where(isodd(num_intersections))[0])
     if len(np.where(isodd(num_intersections))[0]) == 0:
@@ -262,7 +262,7 @@ def optimize_robot_for_goals(build_robot, goals_list, init=None):
         Ideal link length configuration
     """
     bot = build_robot(None)
-    num_dofs = len(bot._Mhome) + 1
+    num_dofs = len(bot.link_home_positions) + 1
     x_init = np.ones(num_dofs)
     x_init[-2:] = .5
     if init is not None:
@@ -331,7 +331,7 @@ def calculate_manipulability_score(bot, theta):
     Returns
         float: manipulability score 0-1
     """
-    jacobian_body = bot.get_jacobian_body(theta)
+    jacobian_body = bot.jacobianBody(theta)
     jw = jacobian_body[0:3, :]
     jv = jacobian_body[3:6, :]
 
@@ -829,7 +829,7 @@ class WorkspaceAnalyzer:
                             ETA=start)
                 p = points[i, :]
                 if fsr.Distance(p, bot_base) > MAX_DIST:
-                 #TODO(Liam) determine max reach from AShape
+                    #TODO(Liam) determine max reach from AShape
                     async_results.append(
                         pool.apply_async(process_empty, (p, True)))
                     continue
@@ -947,7 +947,7 @@ class WorkspaceAnalyzer:
                     np.array([EPSILON, 0, 10 - EPSILON]))
 
                 # where(res == True)
-                num_intersections[np.where(res==True)] += 1
+                num_intersections[np.where(res)] += 1
 
         # Step Four: Discard Instances Where The Arm Collides With The Object In Question
         lva = len(verification_array)
@@ -960,8 +960,8 @@ class WorkspaceAnalyzer:
                         ETA=start)
             if isodd(num_intersections[i]):
                 #sample_index = (i*true_rez*nd)+(j*nd)+k For reference
-                top_ind = i // (true_rez * nd)  #Top Level Bucket
-                snd_ind = i // (nd)  #Second Level Bucket
+                top_ind = i // (true_rez * nd)  # Top Level Bucket
+                snd_ind = i // (nd)  # Second Level Bucket
                 if exempt_ee and snd_ind == nd - 1:
                     #TODO(Liam) is this correct?
                     continue
