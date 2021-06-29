@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import sys
 from workspace_analyzer import WorkspaceAnalyzer
 from robot_link import RobotLink
@@ -74,6 +75,8 @@ cmd_flag_object_scale = '-scale'
 cmd_flag_object_pose = '-pose'
 cmd_flag_object_collision_detect = '-checkCollisions'
 cmd_flag_object_exempt_ee = '-exemptEE'
+cmd_flag_object_bound_volume = '-boundVolume'
+cmd_flag_object_min_dist = '-minDist'
 
 # Within Volume Flags
 cmd_flag_volume_grid_res = '-gridResolution'
@@ -175,7 +178,7 @@ class WorkspaceCommandLine:
     Provide command line access to workspace_analyzer .
     """
 
-    def __init__(self):
+    def __init__(self, args = []):
         self.analyzer = None
         self.ready = False
         self.done = False
@@ -186,6 +189,24 @@ class WorkspaceCommandLine:
         self.pose_results_manipulability_volume = None
         self.pose_results_manipulability_trajectory = None
         self.sequence = []
+        if '-sequence' in args:
+            sequence_file_name = post_flag('-sequence', args)
+            with open(sequence_file_name) as input_file:
+                lines = input_file.readlines()
+                for line in lines:
+                    self.sequence.append(line.strip())
+            self.cmd_start_sequence()
+            return
+        args = sys.argv[1:]
+        if '-sequence' in args:
+            sequence_file_name = post_flag('-sequence', args)
+            with open(sequence_file_name) as input_file:
+                lines = input_file.readlines()
+                for line in lines:
+                    self.sequence.append(line.strip())
+            self.cmd_start_sequence()
+            return
+
         self.main_loop()
 
     def load_robot_from_urdf(self, fname):
@@ -446,6 +467,8 @@ class WorkspaceCommandLine:
         -useJacobian: uses jacobian instead of unit sphere manipulability.
             Incompatible with pose checking
         -plot: displays a basic plot of the results
+        -boundVolume: Optional bounds volume
+        -minDist: Minimum distance between vertices to consider analyzing
         """
         object_file_name = ''
         object_scale = 1
@@ -457,6 +480,8 @@ class WorkspaceCommandLine:
         save_output = False
         plot = False
         use_jacobian = False
+        shape = None
+        min_dist = -1.0
         out_file_name = ''
         if cmd_flag_input_file in cmds:
             object_file_name = post_flag(cmd_flag_input_file, cmds)
@@ -466,33 +491,38 @@ class WorkspaceCommandLine:
         if cmd_flag_object_pose in cmds:
             pose_str = post_flag(cmd_flag_object_pose, cmds)
             object_pose = tm([float(item) for item in pose_str[1:-1].split(',')])
-        if cmd_flag_manip_res  in cmds:
-            manip_resolution = int(post_flag(cmd_flag_manip_res , cmds))
-        if cmd_flag_object_collision_detect  in cmds:
+        if cmd_flag_manip_res in cmds:
+            manip_resolution = int(post_flag(cmd_flag_manip_res, cmds))
+        if cmd_flag_object_collision_detect in cmds:
             collision_detect = 'true' == post_flag(cmd_flag_object_collision_detect, cmds).lower()
-        if cmd_flag_object_exempt_ee  in cmds:
+        if cmd_flag_object_exempt_ee in cmds:
             exempt_ee = 'true' == post_flag(cmd_flag_object_exempt_ee, cmds).lower()
-        if cmd_flag_parallel  in cmds:
+        if cmd_flag_parallel in cmds:
             parallel = True
         if cmd_flag_save_results in cmds:
-            out_file_name = post_flag(cmd_flag_save_results , cmds)
+            out_file_name = post_flag(cmd_flag_save_results, cmds)
             save_output = True
         if cmd_flag_plot_results in cmds:
             plot = True
         if cmd_flag_jacobian_manip in cmds:
             use_jacobian = True
+        if cmd_flag_object_bound_volume in cmds:
+            shape_fname = post_flag(cmd_flag_object_bound_volume, cmds)
+            with open(shape_fname, 'rb') as fp:
+                shape = AlphaShape(sort_cloud(pickle.load(fp)), 1.2)
+        if cmd_flag_object_min_dist in cmds:
+            min_dist = float(post_flag(cmd_flag_object_min_dist, cmds))
 
-        results, mesh = self.analyze_manipulability_on_object_surface(
+        results, mesh = self.analyzer.analyze_manipulability_on_object_surface(
             object_file_name, object_scale,
             object_pose, manip_resolution,
             collision_detect, exempt_ee,
-            parallel, use_jacobian)
+            parallel, use_jacobian,
+            min_dist, shape)
 
         if plot:
             plt.figure()
             ax = plt.axes(projection='3d')
-            ax.add_collection3d(Poly3DCollection(
-                mesh.vectors, facecolors='b', edgecolors='r',linewidths=1, alpha=0.1))
             for r in results:
                 score = r[1]
                 if score < .1:
@@ -500,6 +530,8 @@ class WorkspaceCommandLine:
                 else:
                     col=score_point(score)
                     DrawRectangle(tm([r[0][0],r[0][1],r[0][2],0,0,0]), [.25]*3, ax, c = col, a = 1)
+            ax.add_collection3d(Poly3DCollection(
+                mesh.vectors, facecolors='b', edgecolors='r',linewidths=1, alpha=0.1))
             plt.show()
         self.pose_results_object_surface = results
 

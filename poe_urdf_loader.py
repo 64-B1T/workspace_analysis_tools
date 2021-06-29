@@ -32,6 +32,7 @@ class LinkHolder:
         """
         self.link_cg = None
         self.mass = None
+        self.ext_load_origin = None
         self.id = None
         self.name = None
 
@@ -109,6 +110,9 @@ def parse_link(link):
             mass = float(child.find('mass').get('value'))
             tlink.link_cg = cg_origin
             tlink.mass = mass
+        elif child.tag == 'externalLoad':
+            ext_load_origin = np.array(extract_origin(child), dtype=float)
+            tlink.ext_load_origin = ext_load_origin
     return tlink
 
 
@@ -158,7 +162,9 @@ def build_arm(joints, links):
     #Create the list of joint poses in the home position
     while i < num_dof + 1:
         while joints[i].xyz_origin is None:
-            joints.remove(joints[i])  #Can't do anything with joints that don't have an origin, so remove these.
+            joints.remove(
+                joints[i]
+            )  #Can't do anything with joints that don't have an origin, so remove these.
         ltrn = joints[i].xyz_origin
         lrot = joints[i].rpy_origin
         local_pose = tm([ltrn[0], ltrn[1], ltrn[2], lrot[0], lrot[1], lrot[2]])
@@ -204,8 +210,7 @@ def build_arm(joints, links):
                            ])  #Extremely basic dimensions, not loading parts
 
     arm = Arm(tm(), s_list, ee_home, q_list, w_list)
-    arm._Dims = dims
-    arm._Mhome = jointposes[1:]
-    
+    arm.link_dimensions = dims
+    arm.link_home_positions = jointposes[1:]
 
     return arm

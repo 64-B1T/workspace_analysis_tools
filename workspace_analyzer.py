@@ -214,7 +214,7 @@ def inside_alpha_shape(shape, points, check_bounds=True):
         num_points = len(points)
         i = 0
         for point in points:
-            progressBar(i, num_points - 1, prefix='Checking Bounds         ')
+            progressBar(i, num_points - 1, prefix='Checking Bounds             ')
             i += 1
             if (point[0] < bounds[0][0] or point[0] > bounds[0][1]
                     or point[1] < bounds[1][0] or point[1] > bounds[1][1]
@@ -235,7 +235,7 @@ def inside_alpha_shape(shape, points, check_bounds=True):
     i = 0
     num_intersections = np.zeros(len(points))
     for tri in triangles:
-        progressBar(i, num_tri - 1, prefix='Running Moller Trumbore  ')
+        progressBar(i, num_tri - 1, prefix='Running Moller Trumbore     ')
         i += 1
         res = moller_trumbore_ray_intersection_array(
             points, tri, np.array([EPSILON, 0, 10 - EPSILON]))
@@ -751,7 +751,9 @@ class WorkspaceAnalyzer:
                                                  collision_detect=True,
                                                  exempt_ee=True,
                                                  parallel=False,
-                                                 use_jacobian=False):
+                                                 use_jacobian=False,
+                                                 minimum_dist=-1.0,
+                                                 bound_shape=None):
         """
         Analyze Manipulability On The Surface of An Object
         Given a file handle describing a STL mesh,
@@ -766,6 +768,9 @@ class WorkspaceAnalyzer:
             collision_detect: whether or not to prune colliding configurations
             exempt_ee: exempt the end effector from collision detection (account for numerical acc)
             parallel: whether or not to use parallel processing to accelerate proceedure
+            use_jacobian: Use Jacobian manipulability instead of unit sphere manipulability
+            minimum_dist: Minimum distance between vertices for them to be considered
+            bound_shape: bounding volume (optional) to further reduce points being considered
         Returns:
             results: list of visited points along with scores
             mesh: the loaded STL mesh
@@ -795,6 +800,12 @@ class WorkspaceAnalyzer:
         points = np.unique(stl_mesh.vectors.reshape(
             [int(stl_mesh.vectors.size / 3), 3]),
                            axis=0)
+
+        if bound_shape is not None:
+            #Filter out everything we know the robot can't reach anyway
+            filtered_points = inside_alpha_shape(bound_shape, points)
+
+
         sphr, _ = fsr.unitSphere(manip_resolution)
         num_points = len(points)
         sphr.append([0, 0, 0])
@@ -815,6 +826,8 @@ class WorkspaceAnalyzer:
 
         #num_points = len(vertices)
         #points = vertices
+        if minimum_dist > 0:
+            seen_points = []
 
         #Step One: Filter Out All points Beyond Maximum Reach of the Arm
 
@@ -828,16 +841,38 @@ class WorkspaceAnalyzer:
                             prefix='Spawning Async Tasks        ',
                             ETA=start)
                 p = points[i, :]
+                #Ignore points we've already filtered out
+                if bound_shape is not None:
+                    if p not in filtered_points:
+                        async_results.append(
+                            pool.apply_async(process_empty, (p, True)))
+                        continue
+                #Ignore points which are too far away
                 if fsr.Distance(p, bot_base) > MAX_DIST:
                     #TODO(Liam) determine max reach from AShape
                     async_results.append(
                         pool.apply_async(process_empty, (p, True)))
                     continue
+                #Ignore points which are too close together
+                if minimum_dist > 0:
+                    continuance = False
+                    for point in seen_points:
+                        if fsr.Distance(point, p) < minimum_dist:
+                            async_results.append(
+                                pool.apply_async(process_empty, (p, True)))
+                            continuance = True
+                            break
+                    if continuance:
+                        continue
+
                 async_results.append(
                     pool.apply_async(process_point,
                                      (p, sphere, true_rez, self.bot.robot,
                                       True, use_jacobian)))
+                if minimum_dist > 0:
+                    seen_points.append(p)
             start = time.time()
+            #print(num_points, len(async_results))
             for i in range(num_points):
                 progressBar(i,
                             num_points - 1,
@@ -870,11 +905,29 @@ class WorkspaceAnalyzer:
                             prefix='Computing Reachability      ',
                             ETA=start)
                 p = points[i, :]
+                #Ignore points we've already filtered out
+                if bound_shape is not None:
+                    if p not in filtered_points:
+                        results.append(process_empty(p, True))
+                        continue
+                #Ignore points which are too far away
                 if fsr.Distance(p, bot_base) > MAX_DIST:
                     results.append(process_empty(p, True))
                     continue
+                #Ignore ponts which are too close together
+                if minimum_dist > 0:
+                    continuance = False
+                    for point in seen_points:
+                        if fsr.Distance(point, p) < minimum_dist:
+                            results.append(process_empty(p, True))
+                            continuance = True
+                            break
+                    if continuance:
+                        continue
                 pdone = process_point(p, sphere, true_rez, self.bot, True,
                                       use_jacobian)
+                if minimum_dist > 0:
+                    seen_points.append(p)
                 if pdone[3] == []:
                     continue
                 for j in range(true_rez):
@@ -888,6 +941,7 @@ class WorkspaceAnalyzer:
 
         if not collision_detect:
             return results, stl_mesh
+
         #Step Three: Locate Instances Where the Arm Collides WIth The Object In Question
         nv = len(stl_mesh.vectors)
 
@@ -918,6 +972,7 @@ class WorkspaceAnalyzer:
                                               chunk_sz, :],
                              np.array([EPSILON, 0, 10 - EPSILON
                                        ]), np.zeros(joint_locs_arr_len))))
+
             waiter = WaitText('Running Moller Trumbore')
             while not async_startup[0].ready():
                 waiter.print()
