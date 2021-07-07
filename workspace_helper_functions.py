@@ -1,5 +1,6 @@
 from faser_math import tm
 import numpy as np
+import sys
 import pickle
 
 def score_point(score):
@@ -85,3 +86,38 @@ def sort_cloud(cloud):
     array_to_process = np.array(list_array_input)
     processed_array = np.unique(array_to_process.round(decimals=1), axis=0)
     return processed_array
+
+class WaitText:
+    """
+    Simple helper class to provide feedback to user
+    """
+
+    def __init__(self, text='Processing', iter_limit=5):
+        """
+        Initialize WaitText
+        Args:
+            text: [Optional String] text to display
+            iter_limit: number of '.' to print before resetting
+        """
+        self.text = text
+        self.iter = 0
+        self.iter_limit = iter_limit
+        sys.stdout.write(self.text)
+
+    def print(self):
+        """
+        Updates the waiting message
+        """
+        if self.iter == self.iter_limit:
+            sys.stdout.write('\b' * self.iter_limit)
+            sys.stdout.write('.')
+            self.iter = 0
+        else:
+            sys.stdout.write('.')
+        self.iter += 1
+
+    def done(self):
+        """
+        Prints 'done' and advances to the next line
+        """
+        print(' Done')
