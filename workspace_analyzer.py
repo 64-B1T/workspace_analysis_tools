@@ -12,8 +12,7 @@ import multiprocessing as mp
 import itertools
 sys.path.append('../')
 from faser_utils.disp.disp import disp, progressBar
-from faser_math import FASER as fsr
-from faser_math import tm
+from faser_math import tm, fsr
 
 
 #Constant Values
@@ -512,8 +511,9 @@ class WorkspaceAnalyzer:
                             last_iter,
                             prefix='Spawning Async Tasks    ',
                             ETA=start)
-                    async_results.append(pool.apply_async(process_point(
-                            desired_poses[i], sphere, true_rez, self.bot, False, use_jacobian)))
+                    async_results.append(pool.apply_async(process_point, (
+                            desired_poses[i], sphere, true_rez, self.bot.robot,
+                            False, use_jacobian)))
                 start_2 = time.time()
                 for i in range(num_poses):
                     progressBar(i,
@@ -637,7 +637,7 @@ class WorkspaceAnalyzer:
             #disp(current_cloud[50:60])
             ee_pos, _ = self.bot.FK(theta_list)  #Reset to Neutral Pose
 
-            local_cloud = [fsr.GlobalToLocal(ee_pos, x) for x in current_cloud]
+            local_cloud = [fsr.globalToLocal(ee_pos, x) for x in current_cloud]
             if dof_iter < (total_dof - self.dof_offset):
                 point_list = [point.TAA.flatten()[0:3] for point in local_cloud]
 
@@ -654,7 +654,7 @@ class WorkspaceAnalyzer:
                 theta_list[dof_iter] = joint_configurations[i]
                 ee_pos, success = self.bot.FK(theta_list)
                 if success:
-                    success_list.extend([fsr.LocalToGlobal(ee_pos, x) for x in local_cloud])
+                    success_list.extend([fsr.localToGlobal(ee_pos, x) for x in local_cloud])
 
             disp('Calculating Iter: ' + str(dof_iter))
             return success_list
@@ -871,7 +871,7 @@ class WorkspaceAnalyzer:
                                 pool.apply_async(process_empty, (p, True)))
                             continue
                     #Ignore points which are too far away
-                    if fsr.Distance(p, bot_base) > self.max_dist:
+                    if fsr.distance(p, bot_base) > self.max_dist:
                         #TODO(Liam) determine max reach from AShape
                         async_results.append(
                             pool.apply_async(process_empty, (p, True)))
@@ -880,7 +880,7 @@ class WorkspaceAnalyzer:
                     if minimum_dist > 0:
                         continuance = False
                         for point in seen_points:
-                            if fsr.Distance(point, p) < minimum_dist:
+                            if fsr.distance(point, p) < minimum_dist:
                                 async_results.append(
                                     pool.apply_async(process_empty, (p, True)))
                                 continuance = True
@@ -934,14 +934,14 @@ class WorkspaceAnalyzer:
                         results.append(process_empty(p, True))
                         continue
                 #Ignore points which are too far away
-                if fsr.Distance(p, bot_base) > self.max_dist:
+                if fsr.distance(p, bot_base) > self.max_dist:
                     results.append(process_empty(p, True))
                     continue
                 #Ignore ponts which are too close together
                 if minimum_dist > 0:
                     continuance = False
                     for point in seen_points:
-                        if fsr.Distance(point, p) < minimum_dist:
+                        if fsr.distance(point, p) < minimum_dist:
                             results.append(process_empty(p, True))
                             continuance = True
                             break
@@ -1137,17 +1137,17 @@ class WorkspaceAnalyzer:
                     continue
                 start_point = point_list[i]
                 end_point = point_list[i + 1]
-                distance = fsr.ArcDistance(start_point, end_point)
+                distance = fsr.arcDistance(start_point, end_point)
                 if distance < point_interpolation_dist:
                     continue
                 while distance > point_interpolation_dist:
                     if point_interpolation_mode == 1:
-                        start_point = fsr.CloseGap(start_point, end_point,
+                        start_point = fsr.closeLinearGap(start_point, end_point,
                                                    point_interpolation_dist)
                     else:
-                        start_point = fsr.ArcGap(start_point, end_point,
+                        start_point = fsr.closeArcGap(start_point, end_point,
                                                  point_interpolation_dist)
-                    distance = fsr.ArcDistance(start_point, end_point)
+                    distance = fsr.arcDistance(start_point, end_point)
                     new_points.append(start_point)
             point_list = new_points
 

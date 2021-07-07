@@ -3,9 +3,9 @@ import sys
 from workspace_analyzer import WorkspaceAnalyzer
 from robot_link import RobotLink
 import matplotlib.pyplot as plt
-from poe_urdf_loader import build_arm, parse_urdf
 from faser_math import tm
 from faser_utils.disp.disp import disp
+from faser_robot_kinematics import loadArmFromURDF
 from faser_plotting.Draw.Draw import DrawRectangle, DrawAxes
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from workspace_viewer import view_workspace
@@ -153,8 +153,7 @@ class CommandExecutor:
         Returns:
             arm link instance
         """
-        joints, links = parse_urdf(fname)
-        arm = build_arm(joints, links)
+        arm = loadArmFromURDF(fname)
         link = RobotLink(arm)
 
         def get_ee():

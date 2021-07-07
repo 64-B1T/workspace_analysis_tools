@@ -1,7 +1,8 @@
-from faser_math import tm
 import numpy as np
 import sys
 import pickle
+sys.path.append('..')
+from faser_math import tm
 
 def score_point(score):
     """
