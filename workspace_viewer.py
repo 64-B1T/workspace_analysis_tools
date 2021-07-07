@@ -4,10 +4,11 @@ import numpy as np
 import pickle
 from alpha_shape import AlphaShape
 from faser_utils.disp.disp import progressBar
+from workspace_helper_functions import score_point, sort_cloud
 
+TRANSPARENCY_CONSTANT = .7
 
 def view_workspace(image,
-                  rez=None,
                   draw_alpha_shape=False,
                   alpha_shape_file=None,
                   draw_slices=True):
@@ -15,7 +16,6 @@ def view_workspace(image,
     Handler function for the WorkspaceViewer Class
     Args:
         image: filename of the workspace cloud
-        rez: TODO(LIAM) describe
         draw_alpha_shape: [Optional Boolean] draw alpha shape
         alpha_shape_file: [Optional String] filename of the alpha shape skin
         draw_slices: [Optional Boolean] Draw 3D slices of workspace
@@ -31,42 +31,10 @@ def view_workspace(image,
 
     axes = np.array([[axis_2, axis_3], [axis_1, 0]])
 
-    tracker = WorkspaceViewer(image, axes, rez, draw_alpha_shape,
+    tracker = WorkspaceViewer(image, axes, draw_alpha_shape,
                               alpha_shape_file, draw_slices)
     fig.canvas.mpl_connect('scroll_event', tracker.on_scroll)
     plt.show()
-
-
-
-def score_color(score):
-    """
-    Scores a color for plotting, similiar to a colormap.
-
-    Args:
-        score: score to be evaluated
-    Returns:
-        color: matplotlib color
-    """
-    col = 'darkred'
-    if score > .9:
-        col = 'limegreen'
-    elif score > .8:
-        col = 'green'
-    elif score > .7:
-        col = 'teal'
-    elif score > .6:
-        col = 'dodgerblue'
-    elif score > .5:
-        col = 'blue'
-    elif score > .4:
-        col = 'yellow'
-    elif score > .3:
-        col = 'orange'
-    elif score > .2:
-        col = 'peru'
-    elif score > .1:
-        col = 'red'
-    return col
 
 
 def draw_square(point, dims, excluded=2, col='darkred', axis_2=None):
@@ -85,13 +53,13 @@ def draw_square(point, dims, excluded=2, col='darkred', axis_2=None):
         vert_2 = point[0] + dims[0] / 2
         vert_3 = point[1] - dims[1] / 2
         vert_4 = point[1] + dims[1] / 2
-        f = point[2]
+        f = point[2] #Done
         xs = np.array([vert_1, vert_1, vert_2, vert_2])
-        ys = np.array([vert_3, vert_4, vert_3, vert_4])
-        zs = np.array([f, f, f])
+        ys = np.array([vert_4, vert_3, vert_3, vert_4])
+        zs = np.array([f, f, f, f])
         verts = [list(zip(xs, ys, zs))]
         axis_2.add_collection3d(
-            Poly3DCollection(verts, facecolors=col, alpha=.7))
+            Poly3DCollection(verts, facecolors=col, alpha=TRANSPARENCY_CONSTANT))
     elif excluded == 1:
         vert_1 = point[0] - dims[0] / 2
         vert_2 = point[0] + dims[0] / 2
@@ -99,11 +67,11 @@ def draw_square(point, dims, excluded=2, col='darkred', axis_2=None):
         vert_4 = point[2] + dims[1] / 2
         f = point[1]
         xs = np.array([vert_1, vert_1, vert_2, vert_2])
-        zs = np.array([vert_3, vert_4, vert_3, vert_4])
-        ys = np.array([f, f, f])
+        zs = np.array([vert_4, vert_3, vert_3, vert_4])
+        ys = np.array([f, f, f, f])
         verts = [list(zip(xs, ys, zs))]
         axis_2.add_collection3d(
-            Poly3DCollection(verts, facecolors=col, alpha=.7))
+            Poly3DCollection(verts, facecolors=col, alpha=TRANSPARENCY_CONSTANT))
     elif excluded == 0:
         vert_1 = point[1] - dims[0] / 2
         vert_2 = point[1] + dims[0] / 2
@@ -111,11 +79,11 @@ def draw_square(point, dims, excluded=2, col='darkred', axis_2=None):
         vert_4 = point[2] + dims[1] / 2
         f = point[0]
         ys = np.array([vert_1, vert_1, vert_2, vert_2])
-        zs = np.array([vert_3, vert_4, vert_3, vert_4])
-        xs = np.array([f, f, f])
+        zs = np.array([vert_4, vert_3, vert_3, vert_4])
+        xs = np.array([f, f, f, f])
         verts = [list(zip(xs, ys, zs))]
         axis_2.add_collection3d(
-            Poly3DCollection(verts, facecolors=col, alpha=1))
+            Poly3DCollection(verts, facecolors=col, alpha=TRANSPARENCY_CONSTANT))
 
 
 class WorkspaceViewer:
@@ -126,7 +94,6 @@ class WorkspaceViewer:
     def __init__(self,
                  file_name,
                  ax,
-                 rez=None,
                  draw_alpha_shape=False,
                  alpha_file_name=None,
                  plot_3d_slice=True):
@@ -135,7 +102,6 @@ class WorkspaceViewer:
         Args:
             file_name: name of file for workspace point cloud
             ax: matplotlib.axes object
-            rez: size to plot to
             draw_alpha_shape: [Optional boolean] whether or not to plot the alpha-shape
             alpha_file_name: [Optional boolean] filename of the optional alpha-shape
             plot_3d_slice: [Optional boolean] create a 3d rendered workspace slice graph
@@ -144,10 +110,6 @@ class WorkspaceViewer:
         print('Loading Data')
         with open(self.file_name, 'rb') as fp:
             self.work_space = pickle.load(fp)
-        self.rez = rez
-        if rez is None:
-            self.rez = .1
-            #todo[Liam] Resolve this issue
 
         self.ax = ax
 
@@ -300,20 +262,20 @@ class WorkspaceViewer:
                 score = self.cloud_data[x, y, zi]
                 if score <= .001:
                     continue
-                col = score_color(score)
+                col = score_point(score)
                 draw_square([x, y, zi], [1, 1], 2, col, self.axis_2)
             for z in range(s[2]):
                 score = self.cloud_data[x, yi, z]
                 if score <= .001:
                     continue
-                col = score_color(score)
+                col = score_point(score)
                 draw_square([x, yi, z], [1, 1], 1, col, self.axis_2)
         for y in range(s[1]):
             for z in range(s[2]):
                 score = self.cloud_data[xi, y, z]
                 if score <= .001:
                     continue
-                col = score_color(score)
+                col = score_point(score)
                 draw_square([xi, y, z], [1, 1], 0, col, self.axis_2)
 
     def plot_3d_slices(self):
@@ -408,7 +370,8 @@ class WorkspaceViewer:
         arr = 0
         if file_name is not None:
             print('Loading Cloud Data')
-            arr = np.load(file_name)
+            with open(file_name, 'rb') as fp:
+                arr = sort_cloud(pickle.load(fp))
         else:
             print('Parsing data to produce Alpha Shape Cloud')
             workspace_len = len(self.work_space)

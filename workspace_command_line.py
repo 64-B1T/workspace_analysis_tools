@@ -8,7 +8,10 @@ from faser_math import tm
 from faser_utils.disp.disp import disp, progressBar
 from faser_plotting.Draw.Draw import DrawRectangle, DrawAxes
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from workspace_viewer import view_workspace
 from alpha_shape import AlphaShape
+from workspace_helper_functions import score_point, post_flag
+from workspace_helper_functions import load_point_cloud_from_file, sort_cloud
 import importlib
 import pickle
 import numpy as np
@@ -26,6 +29,7 @@ cmd_str_analyze_unit_shell_manipulability = 'unitShellManipulability'
 cmd_str_analyze_manipulability_object_surface = 'objectSurfaceManipulability'
 cmd_str_manipulability_within_volume = 'manipulabilityWithinVolume'
 cmd_str_manipulability_over_trajectory = 'manipulabilityOverTrajectory'
+cmd_str_view_manipulability_space = 'viewManipulabilitySpace'
 cmd_str_schedule_sequence = 'newSequence'
 cmd_str_start_sequence = 'startSequence'
 cmd_str_view_sequence = 'viewSequence'
@@ -44,6 +48,7 @@ valid_commands = [
     cmd_str_analyze_manipulability_object_surface,
     cmd_str_manipulability_within_volume,
     cmd_str_manipulability_over_trajectory,
+    cmd_str_view_manipulability_space,
     cmd_str_schedule_sequence,
     cmd_str_start_sequence,
     cmd_str_view_sequence,
@@ -77,6 +82,7 @@ cmd_flag_object_collision_detect = '-checkCollisions'
 cmd_flag_object_exempt_ee = '-exemptEE'
 cmd_flag_object_bound_volume = '-boundVolume'
 cmd_flag_object_min_dist = '-minDist'
+cmd_flag_object_approx_collide = '-approxCollisions'
 
 # Within Volume Flags
 cmd_flag_volume_grid_res = '-gridResolution'
@@ -86,91 +92,10 @@ cmd_flag_trajectory_unit_manip = '-unitSphereManipulability'
 cmd_flag_trajectory_interpolation = '-interpolationDist'
 cmd_flag_trajectory_arc_interp = '-arcInterpolation'
 
+#Workspace Viewer Flags
+cmd_flag_viewer_draw_alpha = '-alphaFile'
+cmd_flag_viewer_draw_slices = '-draw3DSlices'
 
-def score_point(score):
-    """
-    Scores a point for use in plotting.
-
-    Args:
-        score: float score of point
-    Returns:
-        color: matplotlib color
-    """
-    col = 'darkred'
-    if score > .9:
-        col = 'limegreen'
-    elif score > .8:
-        col = 'green'
-    elif score > .7:
-        col = 'teal'
-    elif score > .6:
-        col = 'dodgerblue'
-    elif score > .5:
-        col = 'blue'
-    elif score > .4:
-        col = 'yellow'
-    elif score > .3:
-        col = 'orange'
-    elif score > .2:
-        col = 'peru'
-    elif score > .1:
-        col = 'red'
-    return col
-
-
-def load_point_cloud_from_file(fname):
-    """
-    Load a point cloud from a file.
-
-    Args:
-        fname: file to load from
-    Returns:
-        point cloud (tm)
-    """
-    def safe_float(val):
-        if 'np.pi/' in val:
-            return np.pi/float(val[6:])
-        elif 'np.pi*' in val:
-            return np.pi/float(val[6:])
-        else:
-            return float(val)
-    with open(fname, 'r') as f_handle:
-        lines = f_handle.readlines()
-        tms = []
-        for line in lines:
-            tms.append(tm([safe_float(item.strip()) for item in line[1:-2].strip().split(',')]))
-        return tms
-
-
-def post_flag(flag, cmds):
-    """
-    Return the argument of a specified flag  in a list of commands.
-
-    Args:
-        flag: string to seach for
-        cmds: list of strings
-    Returns:
-        argument to flag
-    """
-    return cmds[cmds.index(flag) + 1]
-
-
-def sort_cloud(cloud):
-    """
-    Sort a cloud of points to only have unique points.
-
-    Args:
-        cloud: cloud of points
-    Returns:
-        sorted points
-    """
-    arrl = []
-    for point in cloud:
-        p = point.TAA.flatten()
-        arrl.append([p[0], p[1], p[2]])
-    arrp = np.array(arrl)
-    arr = np.unique(arrp.round(decimals=1), axis=0)
-    return arr
 
 
 class WorkspaceCommandLine:
@@ -469,6 +394,7 @@ class WorkspaceCommandLine:
         -plot: displays a basic plot of the results
         -boundVolume: Optional bounds volume
         -minDist: Minimum distance between vertices to consider analyzing
+        -approxCollisions: use an alphashape over the input mesh instead of direct use
         """
         object_file_name = ''
         object_scale = 1
@@ -482,6 +408,7 @@ class WorkspaceCommandLine:
         use_jacobian = False
         shape = None
         min_dist = -1.0
+        approx_collisions = False
         out_file_name = ''
         if cmd_flag_input_file in cmds:
             object_file_name = post_flag(cmd_flag_input_file, cmds)
@@ -512,13 +439,16 @@ class WorkspaceCommandLine:
                 shape = AlphaShape(sort_cloud(pickle.load(fp)), 1.2)
         if cmd_flag_object_min_dist in cmds:
             min_dist = float(post_flag(cmd_flag_object_min_dist, cmds))
+        if cmd_flag_object_approx_collide in cmds:
+            approx_collisions = True
 
         results, mesh = self.analyzer.analyze_manipulability_on_object_surface(
             object_file_name, object_scale,
             object_pose, manip_resolution,
             collision_detect, exempt_ee,
             parallel, use_jacobian,
-            min_dist, shape)
+            min_dist, shape,
+            approx_collisions)
 
         if plot:
             plt.figure()
@@ -680,6 +610,26 @@ class WorkspaceCommandLine:
             with open(out_file_name, 'wb') as fp:
                 pickle.dump(results, fp)
 
+    def cmd_view_manipulability_space(self, cmds):
+        """
+        View a previously defined manipulability space per slice
+        -f [file]: manipulability space results file
+        -alphaFile [file]: Draws the alpha shape of the specified workspace, for reference
+        -draw3DSlices: Enable plotting of 3d slices of the workspace
+        """
+        point_list = post_flag(cmd_flag_input_file, cmds)
+        draw_alpha_shape = False
+        draw_slices = False
+        alpha_shape_file = None
+        if cmd_flag_viewer_draw_alpha in cmds:
+            draw_alpha_shape = True
+            alpha_shape_file = post_flag(cmd_flag_viewer_draw_alpha, cmds)
+        if cmd_flag_viewer_draw_slices in cmds:
+            draw_slices = True
+        view_workspace(point_list, draw_alpha_shape, alpha_shape_file, draw_slices)
+
+
+
     def main_loop(self):
         """Start Main Loop for Command Line Program."""
         self.done = False
@@ -746,6 +696,8 @@ class WorkspaceCommandLine:
             self.cmd_analyze_manipulability_within_volume(cmds_parsed)
         elif cmds_parsed[0] == cmd_str_manipulability_over_trajectory:
             self.cmd_analyze_manipulability_over_trajectory(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_view_manipulability_space:
+            self.cmd_view_manipulability_space(cmds_parsed)
 
     def cmd_help(self, cmds):
         """
@@ -781,6 +733,8 @@ class WorkspaceCommandLine:
                 disp(self.cmd_load_sequence.__doc__)
             elif cmds[1] == cmd_str_save_sequence:
                 disp(self.cmd_save_sequence.__doc__)
+            elif cmds[1] == cmd_str_view_manipulability_space:
+                disp(self.cmd_view_manipulability_space.__doc__)
         else:
             disp('\nhelp [cmd] for details\nValid Commands:')
             for command in valid_commands:

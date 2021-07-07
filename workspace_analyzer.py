@@ -17,7 +17,16 @@ from faser_math import tm
 
 #Static Variables
 EPSILON = .000001
+RAY_UNIT = 10
 MAX_DIST = 10
+
+#The ALPHA_VALUE is the alpha parameter  which determines which points are included or
+# excluded to create an alpha shape. This is technically an optional parameter,
+# however when the alpha shape optimizes this itself, for large clouds of points
+# it can take many hours to reach a solution. 1.2 is a convenient constant tested on a variety
+# of robot sizes.
+ALPHA_VALUE = 1.2
+
 
 # Helper Functions Tha You Probably Shouldn't Need To Call Directly
 def grid_cloud_within_volume(shape, resolution=.25):
@@ -248,6 +257,20 @@ def inside_alpha_shape(shape, points, check_bounds=True):
     inside = points[np.where(isodd(num_intersections))]
     return inside
 
+def alpha_intersection(shape_1, shape_2):
+    """
+    Return a cut down version of shape_1, including only what is in shape_2
+    Args:
+        shape_1: Alpha shape to be trimmed
+        shape_2: Alpha shape to specify trim
+    Returns:
+        new_shape: Shape created via the existing boundaries
+    """
+    inside_shape_1 = inside_alpha_shape(shape_1, shape_2.triangles)
+    inside_shape_2 = inside_alpha_shape(shape_2, shape_1.triangles)
+    new_points = np.concatenate(inside_shape_1, inside_shape_2)
+    new_shape = AlphaShape(new_points, ALPHA_VALUE)
+    return new_shape
 
 def optimize_robot_for_goals(build_robot, goals_list, init=None):
     """
@@ -618,7 +641,7 @@ class WorkspaceAnalyzer:
                 array_temp = np.array(point_list)
                 arr = np.unique(array_temp.round(decimals=2), axis=0)
                 #Could potentially implement the point exclusion section
-                ashape = AlphaShape(array_temp, 1.2)
+                ashape = AlphaShape(array_temp, ALPHA_VALUE)
                 verts = ashape.verts
                 #local_cloud = []
                 local_cloud = [tm([v[0], v[1], v[2], 0, 0, 0]) for v in verts]
@@ -753,7 +776,8 @@ class WorkspaceAnalyzer:
                                                  parallel=False,
                                                  use_jacobian=False,
                                                  minimum_dist=-1.0,
-                                                 bound_shape=None):
+                                                 bound_shape=None,
+                                                 approximate_bounding=False):
         """
         Analyze Manipulability On The Surface of An Object
         Given a file handle describing a STL mesh,
@@ -804,7 +828,8 @@ class WorkspaceAnalyzer:
         if bound_shape is not None:
             #Filter out everything we know the robot can't reach anyway
             filtered_points = inside_alpha_shape(bound_shape, points)
-
+            if len(filtered_points) == 0:
+                return [], stl_mesh
 
         sphr, _ = fsr.unitSphere(manip_resolution)
         num_points = len(points)
@@ -943,14 +968,25 @@ class WorkspaceAnalyzer:
             return results, stl_mesh
 
         #Step Three: Locate Instances Where the Arm Collides WIth The Object In Question
-        nv = len(stl_mesh.vectors)
+        tri_vecs = None
+
+        if approximate_bounding:
+            if bound_shape is not None:
+                tri_vecs = np.array(AlphaShape(filtered_points, ALPHA_VALUE).triangles)
+            else:
+                tri_vecs = np.array(AlphaShape(points, ALPHA_VALUE).triangles)
+        else:
+            tri_vecs = stl_mesh.vectors
+        vec_len = len(tri_vecs)
 
         def isodd(x):
             return x % 2 != 0
 
         num_intersections = np.zeros(joint_locs_arr_len)
         if parallel:
-            chunk_sz = len(stl_mesh.vectors) // self.num_procs
+            # Integer division to determine chunk size to feed to parallel computation
+            # Excess is absorbed by the last chunk
+            chunk_sz = vec_len // self.num_procs
             async_startup = []
             for i in range(self.num_procs):
                 progressBar(i, self.num_procs - 1,
@@ -959,7 +995,7 @@ class WorkspaceAnalyzer:
                     async_startup.append(
                         pool.apply_async(chunk_moller_trumbore,
                                          (verification_array,
-                                          stl_mesh.vectors[i * chunk_sz:, :],
+                                          tri_vecs[i * chunk_sz:, :],
                                           np.array([EPSILON, 0, 10 - EPSILON]),
                                           np.zeros(joint_locs_arr_len))))
                 else:
@@ -968,7 +1004,7 @@ class WorkspaceAnalyzer:
                         pool.apply_async(
                             chunk_moller_trumbore,
                             (verification_array,
-                             stl_mesh.vectors[i * chunk_sz:(i + 1) *
+                             tri_vecs[i * chunk_sz:(i + 1) *
                                               chunk_sz, :],
                              np.array([EPSILON, 0, 10 - EPSILON
                                        ]), np.zeros(joint_locs_arr_len))))
@@ -992,13 +1028,13 @@ class WorkspaceAnalyzer:
                 num_intersections += moller_results[i]
         else:
             start = time.time()
-            for i in range(nv):
+            for i in range(vec_len):
                 progressBar(i,
-                            nv - 1,
+                            vec_len - 1,
                             prefix='Executing Moller Trumbore   ',
                             ETA=start)
                 res = moller_trumbore_ray_intersection_array(
-                    verification_array, stl_mesh.vectors[i, :],
+                    verification_array, tri_vecs[i, :],
                     np.array([EPSILON, 0, 10 - EPSILON]))
 
                 # where(res == True)
