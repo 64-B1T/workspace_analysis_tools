@@ -17,7 +17,16 @@ from faser_math import tm
 
 #Static Variables
 EPSILON = .000001
+RAY_UNIT = 10
 MAX_DIST = 10
+
+#The ALPHA_VALUE is the alpha parameter  which determines which points are included or
+# excluded to create an alpha shape. This is technically an optional parameter,
+# however when the alpha shape optimizes this itself, for large clouds of points
+# it can take many hours to reach a solution. 1.2 is a convenient constant tested on a variety
+# of robot sizes.
+ALPHA_VALUE = 1.2
+
 
 # Helper Functions Tha You Probably Shouldn't Need To Call Directly
 def grid_cloud_within_volume(shape, resolution=.25):
@@ -259,12 +268,8 @@ def alpha_intersection(shape_1, shape_2):
     """
     inside_shape_1 = inside_alpha_shape(shape_1, shape_2.triangles)
     inside_shape_2 = inside_alpha_shape(shape_2, shape_1.triangles)
-    inside_shape_1_sz = len(inside_shape_1)
-    inside_shape_2_sz = len(inside_shape_2)
-    new_points = np.zeros((inside_shape_1_sz + inside_shape_2_sz, 3))
-    new_points[0:inside_shape_1_sz] = inside_shape_1
-    new_points[inside_shape_1_sz:] = inside_shape_2
-    new_shape = AlphaShape(new_points, 1.2)
+    new_points = np.concatenate(inside_shape_1, inside_shape_2)
+    new_shape = AlphaShape(new_points, ALPHA_VALUE)
     return new_shape
 
 def optimize_robot_for_goals(build_robot, goals_list, init=None):
@@ -636,7 +641,7 @@ class WorkspaceAnalyzer:
                 array_temp = np.array(point_list)
                 arr = np.unique(array_temp.round(decimals=2), axis=0)
                 #Could potentially implement the point exclusion section
-                ashape = AlphaShape(array_temp, 1.2)
+                ashape = AlphaShape(array_temp, ALPHA_VALUE)
                 verts = ashape.verts
                 #local_cloud = []
                 local_cloud = [tm([v[0], v[1], v[2], 0, 0, 0]) for v in verts]
@@ -963,14 +968,13 @@ class WorkspaceAnalyzer:
             return results, stl_mesh
 
         #Step Three: Locate Instances Where the Arm Collides WIth The Object In Question
-        #nv = len(stl_mesh.vectors)
         tri_vecs = None
-        #vec_len = 0
+
         if approximate_bounding:
             if bound_shape is not None:
-                tri_vecs = np.array(AlphaShape(filtered_points, 1.2).triangles)
+                tri_vecs = np.array(AlphaShape(filtered_points, ALPHA_VALUE).triangles)
             else:
-                tri_vecs = np.array(AlphaShape(points, 1.2).triangles)
+                tri_vecs = np.array(AlphaShape(points, ALPHA_VALUE).triangles)
         else:
             tri_vecs = stl_mesh.vectors
         vec_len = len(tri_vecs)
@@ -980,6 +984,8 @@ class WorkspaceAnalyzer:
 
         num_intersections = np.zeros(joint_locs_arr_len)
         if parallel:
+            # Integer division to determine chunk size to feed to parallel computation
+            # Excess is absorbed by the last chunk
             chunk_sz = vec_len // self.num_procs
             async_startup = []
             for i in range(self.num_procs):

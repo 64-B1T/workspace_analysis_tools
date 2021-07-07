@@ -48,6 +48,7 @@ def load_point_cloud_from_file(fname):
             return np.pi/float(val[6:])
         else:
             return float(val)
+
     with open(fname, 'r') as f_handle:
         lines = f_handle.readlines()
         tms = []
@@ -57,7 +58,7 @@ def load_point_cloud_from_file(fname):
 
 def post_flag(flag, cmds):
     """
-    Return the argument of a specified flag  in a list of commands.
+    Return the argument of a specified flag in a list of commands.
 
     Args:
         flag: string to seach for
@@ -77,10 +78,10 @@ def sort_cloud(cloud):
     Returns:
         sorted points
     """
-    arrl = []
+    list_array_input = []
     for point in cloud:
         p = point.TAA.flatten()
-        arrl.append([p[0], p[1], p[2]])
-    arrp = np.array(arrl)
-    arr = np.unique(arrp.round(decimals=1), axis=0)
-    return arr
+        list_array_input.append([p[0], p[1], p[2]])
+    array_to_process = np.array(list_array_input)
+    processed_array = np.unique(array_to_process.round(decimals=1), axis=0)
+    return processed_array
