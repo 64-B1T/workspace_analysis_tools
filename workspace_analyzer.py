@@ -395,6 +395,16 @@ def process_empty(p, store_joint_locations=False):
     return [p, 0, [], []]
 
 
+def get_collision_data(collision_manager):
+    collision_manager.update()
+    inter_collisions = False
+    if len(collision_manager.collision_objects) > 1:
+        inter_collisions = collision_manager.checkollisions()[0]
+    solo_collisions = collision_manager.collision_objects[0].checkInternalCollisions()
+    if inter_collisions or solo_collisions:
+        return True
+    return False
+
 def process_point(p,
                   sphere,
                   true_rez,
@@ -418,22 +428,12 @@ def process_point(p,
     Returns:
         Results: [point, success_percentage, successful_orientations]
     """
-    def get_collision_data():
-        collision_manager.update()
-        inter_collisions = False
-        if len(collision_manager.collision_objects) > 1:
-            inter_collisions = collision_manager.checkollisions()[0]
-        solo_collisions = collision_manager.collision_objects[0].checkInternalCollisions()
-        if inter_collisions or solo_collisions:
-            return True
-        return False
-
     successes = []
     thetas = []
     success_count = 0
     if use_jacobian:
         score, max_pos, theta = maximize_manipulability_at_point(bot, p)
-        if collision_detect and get_collision_data():
+        if collision_detect and get_collision_data(collision_manager):
             score = 0
         if score == 0:
             return [p, 0, [], []]
@@ -444,7 +444,7 @@ def process_point(p,
         rot = sphere[j, :]
         goal = tm([p[0], p[1], p[2], rot[0], rot[1], rot[2]])
         theta, suc = bot.IK(goal)
-        if collision_detect and get_collision_data():
+        if collision_detect and get_collision_data(collision_manager):
             suc = False
         if suc:
             thetas.append(theta)
@@ -530,13 +530,14 @@ class WorkspaceAnalyzer:
         true_rez = len(sphere)
 
         collision_manager = None
-        if collision_detect:
-            collision_manager = ColliderManager()
-            collision_manager.bind(ColliderArm(self.bot, 'model'))
+
 
         start = time.time()
         if parallel and num_poses > 8 * self.num_procs:  # Is it *really* worth parallelism?
             async_results = []
+            if collision_detect:
+                collision_manager = ColliderManager()
+                collision_manager.bind(ColliderArm(self.bot.robot, 'model'))
             with mp.Pool(self.num_procs) as pool:
                 for i in range(num_poses):
                     progressBar(i,
@@ -552,9 +553,11 @@ class WorkspaceAnalyzer:
                             last_iter,
                             prefix='Collecting Async Results',
                             ETA=start_2)
-                    results.append(async_results[i].get(timeout=2*true_rez))
+                    results.append(async_results[i].get(timeout=5*true_rez))
         else:
-
+            if collision_detect:
+                collision_manager = ColliderManager()
+                collision_manager.bind(ColliderArm(self.bot, 'model'))
             for i in range(num_poses):
                 progressBar(i,
                             last_iter,

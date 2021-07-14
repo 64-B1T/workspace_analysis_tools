@@ -326,8 +326,6 @@ class CommandExecutor:
         -plot: displays a basic plot of the results
         """
         num_iterations = 12
-
-
         plot = False
         if cmd_flag_num_iters in cmds:
             num_iters_str = post_flag(cmd_flag_num_iters, cmds)
@@ -514,11 +512,6 @@ class CommandExecutor:
 
         manip_resolution = 25
         grid_resolution = .25
-        parallel = False
-
-        use_jacobian = False
-        plot = False
-
 
         if cmd_flag_manip_res in cmds:
             manip_resolution = int(post_flag(cmd_flag_manip_res, cmds))
@@ -527,8 +520,7 @@ class CommandExecutor:
         parallel = cmd_flag_parallel in cmds
         save_output, out_file_name = self.save_results_flag(cmds)
         collision_detect = cmd_flag_collision_detect in cmds
-        if cmd_flag_jacobian_manip in cmds:
-            use_jacobian = True
+        use_jacobian = cmd_flag_jacobian_manip in cmds
         plot = cmd_flag_plot_results in cmds
         results = self.analyzer.analyze_manipulability_within_volume(
             shape, grid_resolution, manip_resolution, parallel, use_jacobian, collision_detect)
@@ -636,6 +628,16 @@ class WorkspaceCommandLine(CommandExecutor):
 
     def __init__(self, args = []):
         super().__init__()
+        self.analyzer = None
+        self.ready = False
+        self.done = False
+        self.exhaustive_pose_cloud = None
+        self.functional_pose_cloud = None
+        self.pose_results_6dof_shells = None
+        self.pose_results_object_surface = None
+        self.pose_results_manipulability_volume = None
+        self.pose_results_manipulability_trajectory = None
+        self.sequence = []
         self.set_sequence_at_launch(args)
         self.main_loop()
 
