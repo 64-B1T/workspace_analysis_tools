@@ -1,27 +1,35 @@
 #!/usr/bin/env python
-import sys
-from workspace_analyzer import WorkspaceAnalyzer
-from robot_link import RobotLink
+
+#Utility Imports
+import importlib
 import matplotlib.pyplot as plt
-from faser_math import tm
-from faser_utils.disp.disp import disp
-from faser_robot_kinematics import loadArmFromURDF
-from faser_plotting.Draw.Draw import DrawRectangle, DrawAxes
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-from workspace_viewer import view_workspace
+import pickle
+import sys
+
+#Other Module Imports
+from faser_math import tm
+from faser_plotting.Draw.Draw import DrawRectangle, DrawAxes
+from faser_robot_kinematics import loadArmFromURDF
+from faser_utils.disp.disp import disp
+
+#This Module Imports
+from robot_link import RobotLink
 from alpha_shape import AlphaShape
+from workspace_analyzer import WorkspaceAnalyzer
 from workspace_helper_functions import score_point, post_flag
 from workspace_helper_functions import load_point_cloud_from_file, sort_cloud
-import importlib
-import pickle
+from workspace_viewer import view_workspace
 
-#The ALPHA_VALUE is the alpha parameter  which determines which points are included or
+#The ALPHA_VALUE is the alpha parameter which determines which points are included or
 # excluded to create an alpha shape. This is technically an optional parameter,
 # however when the alpha shape optimizes this itself, for large clouds of points
 # it can take many hours to reach a solution. 1.2 is a convenient constant tested on a variety
 # of robot sizes.
 ALPHA_VALUE = 1.2
 
+#The TRANSPARENCY_CONSTANT determines the degree of transparency at which 3d objects are shown
+# when plotted within matplotlib.
 TRANSPARENCY_CONSTANT = .5
 
 
@@ -30,7 +38,7 @@ done = False
 cmd_str_help = 'help'
 cmd_str_exit = 'exit'
 cmd_str_load_robot = 'loadRobot'
-cmd_str_analyze_task = 'analyzeTaskSpace'
+cmd_str_analyze_task_manipulability = 'analyzeTaskSpaceManipulability'
 cmd_str_analyze_total_workspace_exhaustive = 'exhaustiveMethodTotalWorkspace'
 cmd_str_analyze_total_workspace_alpha = 'alphaMethodTotalWorkspace'
 cmd_str_analyze_unit_shell_manipulability = 'unitShellManipulability'
@@ -49,7 +57,7 @@ valid_commands = [
     cmd_str_help,
     cmd_str_exit,
     cmd_str_load_robot,
-    cmd_str_analyze_task,
+    cmd_str_analyze_task_manipulability,
     cmd_str_analyze_total_workspace_exhaustive,
     cmd_str_analyze_total_workspace_alpha,
     cmd_str_analyze_unit_shell_manipulability,
@@ -72,6 +80,7 @@ cmd_flag_plot_results = '-plot'
 cmd_flag_parallel = '-parallel'
 cmd_flag_manip_res = '-manipulationResolution'
 cmd_flag_jacobian_manip = '-useJacobian'
+cmd_flag_collision_detect = '-checkCollisions'
 
 # Robot Loading Flags
 cmd_flag_from_urdf = '-fromURDF'
@@ -86,7 +95,6 @@ cmd_flag_shells_points_per_shell = '-numShellPoints'
 # Object Surface Flags
 cmd_flag_object_scale = '-scale'
 cmd_flag_object_pose = '-pose'
-cmd_flag_object_collision_detect = '-checkCollisions'
 cmd_flag_object_exempt_ee = '-exemptEE'
 cmd_flag_object_bound_volume = '-boundVolume'
 cmd_flag_object_min_dist = '-minDist'
@@ -121,29 +129,24 @@ class CommandExecutor:
         self.pose_results_manipulability_trajectory = None
         self.sequence = []
 
+    def load_args(self, args):
+        if '-sequence' in args:
+            sequence_file_name = post_flag('-sequence', args)
+            with open(sequence_file_name) as input_file:
+                lines = input_file.readlines()
+                for line in lines:
+                    self.sequence.append(line.strip())
+            self.cmd_start_sequence()
+            return
     def set_sequence_at_launch(self, args):
         """
         Sets a launch sequence so that it can be executed straight from the command line
         Args:
             args: Argument sequence to set up
         """
-        if '-sequence' in args:
-            sequence_file_name = post_flag('-sequence', args)
-            with open(sequence_file_name) as input_file:
-                lines = input_file.readlines()
-                for line in lines:
-                    self.sequence.append(line.strip())
-            self.cmd_start_sequence()
-            return
+        self.load_args(args)
         args = sys.argv[1:]
-        if '-sequence' in args:
-            sequence_file_name = post_flag('-sequence', args)
-            with open(sequence_file_name) as input_file:
-                lines = input_file.readlines()
-                for line in lines:
-                    self.sequence.append(line.strip())
-            self.cmd_start_sequence()
-            return
+        self.load_args(args)
 
     def load_robot_from_urdf(self, fname):
         """
@@ -173,6 +176,11 @@ class CommandExecutor:
         link.bind_jt(get_jt)
         link.joint_mins = link.robot.joint_mins
         link.joint_maxs = link.robot.joint_maxs
+
+        #Collision Support
+        link.link_names = arm.link_names
+        link.vis_props = arm.vis_props
+        link.col_props = arm.col_props
         return link
 
     def cmd_load_robot(self, cmds):
@@ -195,6 +203,121 @@ class CommandExecutor:
             temp_module = importlib.import_module(file_name_sanitized)
             return temp_module.load_arm()
 
+    def load_point_cloud_in_cmds(self, cmds):
+        """
+        Load pose cloud from a file:
+        Args:
+            cmds: command list
+        Returns:
+            [tm] tm list
+        """
+        if cmd_flag_input_file not in cmds:
+            disp('A trajectory file is required')
+            return None
+        else:
+            point_list = load_point_cloud_from_file(post_flag(cmd_flag_input_file, cmds))
+        return point_list
+
+    def save_results_flag(self, cmds):
+        """
+        Determine whether or not to save results
+        Args:
+            cmds: command list
+        Returns:
+            output boolean, output file name
+        """
+        out_file_name = ''
+        save_output = False
+        if cmd_flag_save_results in cmds:
+            out_file_name = post_flag(cmd_flag_save_results, cmds)
+            save_output = True
+        return save_output, out_file_name
+
+    def save_to_file(self, results, out_file_name):
+        """
+        Saves results to a file
+        Args:
+            results: results to save
+            out_file_name: output file name
+        """
+        with open(out_file_name, 'wb') as fp:
+            pickle.dump(results, fp)
+
+    def plot_reachability_space(self, pose_cloud):
+        """
+        Plots reachability space givin a pose cloud
+        Args:
+            pose_cloud: pose cloud to plot for
+        """
+        plt.figure()
+        ax = plt.axes(projection='3d')
+        alpha = AlphaShape(sort_cloud(pose_cloud), ALPHA_VALUE)
+        my_cmap = plt.get_cmap('jet')
+        ax.plot_trisurf(*zip(*alpha.verts),
+            triangles=alpha.triangle_inds, cmap=my_cmap,alpha =.2, edgecolor='black')
+        plt.show()
+
+    def plot_manipulability_grid(self, results, grid_rez):
+        """
+        Plots a manipulability grid given results and a grid resolution
+
+        Args:
+            results: Results list
+            grid_rez: grid resolution, in meters
+        """
+        plt.figure()
+        ax = plt.axes(projection='3d')
+        for r in results:
+            score = r[1]
+            col = score_point(score)
+            DrawRectangle(
+                tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
+                [grid_rez]*3, ax, c=col, a=TRANSPARENCY_CONSTANT)
+            #disp('Plotting')
+        plt.show()
+
+    def cmd_analyze_task_manipulability(self, cmds):
+        """
+        Analyze manipulability space
+        -o : save output to file specified
+        -plot: displays a basic plot of the results
+        -manipResolution: desired manipulation resolution (number of unit sphere points) Default 25
+        -parallel: Calculate in parallel for increased efficiency. Default false
+        -useJacobian: use jacobian optimization instead of unit sphere.
+            Faster, but may give less info. Default false
+        -checkCollisions: enable collision checking
+        """
+        point_list = []
+        manip_resolution = 25
+        parallel = False
+        use_jacobian = False
+        collision_detect = False
+        plot = False
+
+
+        point_list = load_point_cloud_from_file(cmds)
+        if point_list is None:
+            return
+
+        if cmd_flag_manip_res in cmds:
+            manip_resolution = int(post_flag(cmd_flag_manip_res, cmds))
+        parallel = cmd_flag_parallel in cmds
+        use_jacobian = cmd_flag_jacobian_manip in cmds
+        collision_detect = cmd_flag_collision_detect in cmds
+
+        save_output, out_file_name = self.save_results_flag(cmds)
+        plot = cmd_flag_plot_results in cmds
+
+        results = self.analyzer.analyze_task_space_manipulability(point_list,
+                manip_resolution, parallel, use_jacobian, collision_detect)
+
+        self.pose_results_manipulability_volume = results
+        if plot:
+            self.plot_manipulability_grid(results, 0.1)
+        if save_output:
+            self.save_to_file(results, out_file_name)
+
+
     def cmd_analyze_total_workspace_exhaustive(self, cmds):
         """
         Analyze a robot's total reachability using joint variation (exponential time).
@@ -203,31 +326,20 @@ class CommandExecutor:
         -plot: displays a basic plot of the results
         """
         num_iterations = 12
-        save_output = False
-        out_file_name = ''
+
+
         plot = False
         if cmd_flag_num_iters in cmds:
             num_iters_str = post_flag(cmd_flag_num_iters, cmds)
             num_iterations = int(num_iters_str)
-        if cmd_flag_save_results in cmds:
-            out_file_name = post_flag(cmd_flag_save_results, cmds)
-            save_output = True
-        if cmd_flag_plot_results in cmds:
-            plot = True
+        save_output, out_file_name = self.save_results_flag(cmds)
+        plot = cmd_flag_plot_results in cmds
         pose_cloud = self.analyzer.analyze_total_workspace_exhaustive_point_cloud(num_iterations)
         if plot:
-            plt.figure()
-            ax = plt.axes(projection='3d')
-            alpha = AlphaShape(sort_cloud(pose_cloud), ALPHA_VALUE)
-            my_cmap = plt.get_cmap('jet')
-
-            ax.plot_trisurf(*zip(*alpha.verts),
-                triangles=alpha.triangle_inds, cmap=my_cmap, alpha=.2, edgecolor='black')
-            plt.show()
+            self.plot_reachability_space(pose_cloud)
         self.exhaustive_pose_cloud = pose_cloud
         if save_output:
-            with open(out_file_name, 'wb') as fp:
-                pickle.dump(pose_cloud, fp)
+            self.save_to_file(pose_cloud, out_file_name)
 
     def cmd_analyze_total_workspace_functional(self, cmds):
         """
@@ -238,30 +350,19 @@ class CommandExecutor:
         -plot: displays a basic plot of the results
         """
         num_iterations = 25
-        save_output = False
-        out_file_name = ''
         plot = False
         if cmd_flag_num_iters in cmds:
             num_iters_str = post_flag(cmd_flag_num_iters, cmds)
             num_iterations = int(num_iters_str)
-        if cmd_flag_save_results in cmds:
-            out_file_name = post_flag(cmd_flag_save_results, cmds)
-            save_output = True
-        if cmd_flag_plot_results in cmds:
-            plot = True
+        save_output, out_file_name = self.save_results_flag(cmds)
+        plot = cmd_flag_plot_results in cmds
         pose_cloud = self.analyzer.analyze_total_workspace_functional(num_iterations)
         if plot:
-            plt.figure()
-            ax = plt.axes(projection='3d')
-            alpha = AlphaShape(sort_cloud(pose_cloud), ALPHA_VALUE)
-            my_cmap = plt.get_cmap('jet')
-            ax.plot_trisurf(*zip(*alpha.verts),
-                triangles=alpha.triangle_inds, cmap=my_cmap,alpha =.2, edgecolor='black')
-            plt.show()
+            self.plot_reachability_space(pose_cloud)
         self.functional_pose_cloud = pose_cloud
+
         if save_output:
-            with open(out_file_name, 'wb') as fp:
-                pickle.dump(pose_cloud, fp)
+            self.save_to_file(pose_cloud, out_file_name)
 
     def cmd_analyze_manipulability_unit_shells(self, cmds):
         """
@@ -269,13 +370,12 @@ class CommandExecutor:
         -range: maximum range (meters) of the largest unit sphere from robot origin. Default 4
         -numShells: number of concentric shells from the robot base to range. Default 30
         -numShellPoints: number of points to analyze per shell. Default 1000
+        -checkCollisions: enable collision checking
         -plot: displays a basic plot of the results
         """
         shells_range = 4
         num_shells = 30
         points_per_shell = 1000
-        save_output = False
-        out_file_name = ''
         plot = False
         if cmd_flag_shells_range in cmds:
             num_iters_str = post_flag(cmd_flag_shells_range, cmds)
@@ -286,29 +386,17 @@ class CommandExecutor:
         if cmd_flag_shells_points_per_shell  in cmds:
             num_iters_str = post_flag(cmd_flag_shells_points_per_shell, cmds)
             points_per_shell = int(num_iters_str)
-        if cmd_flag_save_results in cmds:
-            out_file_name = post_flag(cmd_flag_save_results, cmds)
-            save_output = True
-        if cmd_flag_plot_results in cmds:
-            plot = True
+        collision_detect = cmd_flag_collision_detect in cmds
+        save_output, out_file_name = self.save_results_flag(cmds)
+        plot = cmd_flag_plot_results in cmds
+
         results = self.analyzer.analyze_6dof_manipulability(
-            shells_range, num_shells, points_per_shell)
-        if plot:
-            plt.figure()
-            ax = plt.axes(projection='3d')
-            for r in results:
-                score = r[1]
-                if score < .1:
-                    continue
-                else:
-                    col = score_point(score)
-                    DrawRectangle(tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
-                        [.25] * 3, ax, c=col, a=TRANSPARENCY_CONSTANT)
-            plt.show()
+            shells_range, num_shells, points_per_shell, collision_detect)
         self.pose_results_6dof_shells = results
+        if plot:
+            self.plot_manipulability_grid(results, 0.25)
         if save_output:
-            with open(out_file_name, 'wb') as fp:
-                pickle.dump(results, fp)
+            self.save_to_file(results, out_file_name)
 
     def cmd_analyze_manipulability_object_surface(self, cmds):
         """
@@ -334,12 +422,12 @@ class CommandExecutor:
         collision_detect = True
         exempt_ee = True
         parallel = False
-        save_output = False
+
         plot = False
         use_jacobian = False
         shape = None
         min_dist = -1.0
-        out_file_name = ''
+
         if cmd_flag_input_file in cmds:
             object_file_name = post_flag(cmd_flag_input_file, cmds)
         if cmd_flag_object_scale in cmds:
@@ -350,17 +438,11 @@ class CommandExecutor:
             object_pose = tm([float(item) for item in pose_str[1:-1].split(',')])
         if cmd_flag_manip_res in cmds:
             manip_resolution = int(post_flag(cmd_flag_manip_res, cmds))
-        if cmd_flag_object_collision_detect in cmds:
-            collision_detect = 'true' == post_flag(cmd_flag_object_collision_detect, cmds).lower()
-        if cmd_flag_object_exempt_ee in cmds:
-            exempt_ee = 'true' == post_flag(cmd_flag_object_exempt_ee, cmds).lower()
-        if cmd_flag_parallel in cmds:
-            parallel = True
-        if cmd_flag_save_results in cmds:
-            out_file_name = post_flag(cmd_flag_save_results, cmds)
-            save_output = True
-        if cmd_flag_plot_results in cmds:
-            plot = True
+        collision_detect = cmd_flag_collision_detect in cmds
+        exempt_ee = cmd_flag_object_exempt_ee in cmds
+        parallel = cmd_flag_parallel in cmds
+        save_output, out_file_name = self.save_results_flag(cmds)
+        plot = cmd_flag_plot_results in cmds
         if cmd_flag_jacobian_manip in cmds:
             use_jacobian = True
         if cmd_flag_object_bound_volume in cmds:
@@ -392,10 +474,8 @@ class CommandExecutor:
                 mesh.vectors, facecolors='b', edgecolors='r', linewidths=1, alpha=0.1))
             plt.show()
         self.pose_results_object_surface = results
-
         if save_output:
-            with open(out_file_name, 'wb') as fp:
-                pickle.dump(results, fp)
+            self.save_to_file(results, out_file_name)
 
     def cmd_analyze_manipulability_within_volume(self, cmds):
         """
@@ -435,42 +515,27 @@ class CommandExecutor:
         manip_resolution = 25
         grid_resolution = .25
         parallel = False
-        save_output = False
+
         use_jacobian = False
         plot = False
-        out_file_name = ''
+
 
         if cmd_flag_manip_res in cmds:
             manip_resolution = int(post_flag(cmd_flag_manip_res, cmds))
         if cmd_flag_volume_grid_res in cmds:
             grid_resolution = float(post_flag(cmd_flag_volume_grid_res, cmds))
-        if cmd_flag_parallel in cmds:
-            parallel = True
-        if cmd_flag_save_results in cmds:
-            out_file_name = post_flag(cmd_flag_save_results, cmds)
-            save_output = True
+        parallel = cmd_flag_parallel in cmds
+        save_output, out_file_name = self.save_results_flag(cmds)
+        collision_detect = cmd_flag_collision_detect in cmds
         if cmd_flag_jacobian_manip in cmds:
             use_jacobian = True
-        if cmd_flag_plot_results in cmds:
-            plot = True
+        plot = cmd_flag_plot_results in cmds
         results = self.analyzer.analyze_manipulability_within_volume(
-            shape, grid_resolution, manip_resolution, parallel, use_jacobian)
-
+            shape, grid_resolution, manip_resolution, parallel, use_jacobian, collision_detect)
         if plot:
-            plt.figure()
-            ax = plt.axes(projection='3d')
-            for r in results:
-                score = r[1]
-                col = score_point(score)
-                DrawRectangle(
-                    tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
-                    [grid_resolution]*3, ax, c=col, a=TRANSPARENCY_CONSTANT)
-                #disp('Plotting')
-            plt.show()
-        self.pose_results_manipulability_volume = results
+            self.plot_manipulability_grid(results, grid_resolution)
         if save_output:
-            with open(out_file_name, 'wb') as fp:
-                pickle.dump(results, fp)
+            self.save_to_file(results, out_file_name)
 
     def cmd_analyze_manipulability_over_trajectory(self, cmds):
         """
@@ -488,8 +553,8 @@ class CommandExecutor:
         manip_resolution = 25
         point_interpolation_dist = -1
         point_interpolation_mode = 1
-        save_output = False
-        out_file_name = ''
+
+
         plot = False
 
         if cmd_flag_input_file not in cmds:
@@ -510,16 +575,15 @@ class CommandExecutor:
         if cmd_flag_trajectory_arc_interp in cmds:
             point_interpolation_mode = 2
 
-        if cmd_flag_save_results in cmds:
-            out_file_name = post_flag(cmd_flag_save_results, cmds)
-            save_output = True
+        collision_detect = cmd_flag_collision_detect in cmds
 
-        if cmd_flag_plot_results in cmds:
-            plot = True
+        save_output, out_file_name = self.save_results_flag(cmds)
+
+        plot = cmd_flag_plot_results in cmds
 
         results = self.analyzer.analyze_manipulability_over_trajectory(
             point_list, manipulability_mode, manip_resolution,
-            point_interpolation_dist, point_interpolation_mode)
+            point_interpolation_dist, point_interpolation_mode, collision_detect)
 
         self.pose_results_manipulability_trajectory = results
 
@@ -530,10 +594,8 @@ class CommandExecutor:
                 DrawAxes(r[0], r[1] / 2, ax)
                 ax.scatter3D(r[0][0], r[0][1], r[0][2], c=score_point(r[1]), s=25)
             plt.show()
-
         if save_output:
-            with open(out_file_name, 'wb') as fp:
-                pickle.dump(results, fp)
+            self.save_to_file(results, out_file_name)
 
     def cmd_view_manipulability_space(self, cmds):
         """
@@ -698,6 +760,8 @@ class WorkspaceCommandLine(CommandExecutor):
             return
         if cmds_parsed[0] == cmd_str_analyze_total_workspace_exhaustive:
             self.cmd_analyze_total_workspace_exhaustive(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_analyze_task_manipulability:
+            self.cmd_analyze_task_manipulability(cmds_parsed)
         elif cmds_parsed[0] == cmd_str_analyze_total_workspace_alpha:
             self.cmd_analyze_total_workspace_functional(cmds_parsed)
         elif cmds_parsed[0] == cmd_str_analyze_unit_shell_manipulability:
@@ -723,6 +787,8 @@ class WorkspaceCommandLine(CommandExecutor):
                 disp('Exits the program')
             elif cmds[1] == cmd_str_load_robot:
                 disp(self.cmd_load_robot.__doc__)
+            elif cmds[1] == cmd_str_analyze_task_manipulability:
+                disp(self.cmd_analyze_task_manipulability.__doc__)
             elif cmds[1] == cmd_str_analyze_total_workspace_exhaustive:
                 disp(self.cmd_analyze_total_workspace_exhaustive.__doc__)
             elif cmds[1] == cmd_str_analyze_total_workspace_alpha:

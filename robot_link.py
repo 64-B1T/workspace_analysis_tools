@@ -18,6 +18,15 @@ class RobotLink:
         self.joint_maxs = []
         self.methods_bound = [0, 0, 0, 0]
 
+        #Support for Collision Checking
+        self.link_names = None
+        self.vis_props = None #Used as a backup if col props unavailable
+        self.col_props = None #Populate first
+        #Col/Vis Props Format:
+        #[[type, origin, properties],[]]
+        #[['msh', [0, 0, 0, 0, 0, 0], ['../example_mesh', 1.0]]]
+        #Check 'completeGeometryParse in arm_model for more info'
+
     def is_ready(self):
         """
         Readiness Check for robot link system

@@ -532,7 +532,7 @@ class WorkspaceAnalyzer:
         collision_manager = None
         if collision_detect:
             collision_manager = ColliderManager()
-            collision_manager.bind(ColliderArm(self.link.robot, 'model'))
+            collision_manager.bind(ColliderArm(self.bot, 'model'))
 
         start = time.time()
         if parallel and num_poses > 8 * self.num_procs:  # Is it *really* worth parallelism?
@@ -771,7 +771,7 @@ class WorkspaceAnalyzer:
         collision_manager = None
         if collision_detect:
             collision_manager = ColliderManager()
-            collision_manager.bind(ColliderArm(self.link.robot, 'model'))
+            collision_manager.bind(ColliderArm(self.bot, 'model'))
         for shell in shells:
             for point in shell:
                 progressBar(i, (num_shells + 2) * points_per_shell,
@@ -822,7 +822,7 @@ class WorkspaceAnalyzer:
 
         raw_points = []
         for i in range(len(stl_mesh.vertices)):
-            raw_points.append(mesh.vertices[i,:])
+            raw_points.append(mesh.vertices[i, :])
         points = np.unique(np.array(raw_points))
 
         if bound_shape is not None:
@@ -849,7 +849,7 @@ class WorkspaceAnalyzer:
 
         if collision_detect:
             collision_manager = ColliderManager()
-            collision_manager.bind(ColliderArm(self.link.robot, 'model'))
+            collision_manager.bind(ColliderArm(self.link, 'model'))
             obstacle_manager = ColliderObstacles('object_surface')
             obstacle_manager.addMesh('object', stl_mesh)
             #collision_manager.bind(ColliderObstacles())
