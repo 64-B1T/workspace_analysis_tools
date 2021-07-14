@@ -4,6 +4,7 @@ import numpy as np
 import time
 from datetime import datetime
 from alpha_shape import AlphaShape
+from workspace_helper_functions import WaitText
 from stl import mesh
 import scipy as sci
 # from faser_plotting.Draw.Draw import *
@@ -11,14 +12,19 @@ import multiprocessing as mp
 import itertools
 sys.path.append('../')
 from faser_utils.disp.disp import disp, progressBar
-from faser_math import FASER as fsr
-from faser_math import tm
+from faser_math import tm, fsr
 
 
-#Static Variables
-EPSILON = .000001
-RAY_UNIT = 10
-MAX_DIST = 10
+#Constant Values
+EPSILON = .000001  # Deviation Acceptable for Moller Trumbore
+RAY_UNIT = 10  # Unit Vector Constant in Moller Trumbore. Arbitrary
+MAX_DIST = 10  # Maximum distance from robot base to discount points in object surface
+UNIQUE_DECIMALS = 2  # Decimal places to filter out for uniqueness in Alpha Shapes
+
+# Number of DOF from the End Effector assumed to be capable of creating a 3d shape
+# Through varying of the last n DOF and tracking End Effector coordinates.
+# Insufficient DOF OFFSET can result in the alpha shape reachability solver failing.
+DOF_OFFSET = 3
 
 #The ALPHA_VALUE is the alpha parameter  which determines which points are included or
 # excluded to create an alpha shape. This is technically an optional parameter,
@@ -26,6 +32,10 @@ MAX_DIST = 10
 # it can take many hours to reach a solution. 1.2 is a convenient constant tested on a variety
 # of robot sizes.
 ALPHA_VALUE = 1.2
+
+#Constant values DOF_OFFSET, ALPHA_VALUE, UNIQUE_DECIMALS, and MAX_DIST are used to initialize
+#Class variables of the same function, to allow tuning *if required*
+#They are reproduced here at the top of the file as constants for visibility and convenience
 
 
 # Helper Functions Tha You Probably Shouldn't Need To Call Directly
@@ -155,8 +165,6 @@ def moller_trumbore_ray_intersection_array(points,
     res[np.where(v < 0.0)] = False
     res[np.where((u + v) > 1.0)] = False
     t = f * np.dot(q, edge_2)
-    #t = f * np.dot(edge_2, q)
-    #if (t > EPSILON):
 
     res[np.where(t <= EPSILON)] = False
 
@@ -182,6 +190,7 @@ def chunk_moller_trumbore(test_points, triangles, epsilon_vector,
         # where res == True
         result_array[np.where(res)] += 1
     return result_array
+
 def inside_alpha_shape(shape, points, check_bounds=True):
     """
     This problem is a little more complicated than it seems on its face, and requires
@@ -247,11 +256,10 @@ def inside_alpha_shape(shape, points, check_bounds=True):
         progressBar(i, num_tri - 1, prefix='Running Moller Trumbore     ')
         i += 1
         res = moller_trumbore_ray_intersection_array(
-            points, tri, np.array([EPSILON, 0, 10 - EPSILON]))
+            points, tri, np.array([EPSILON, 0, RAY_UNIT - EPSILON]))
         # where res == true
         num_intersections[np.where(res)] += 1
 
-    #print(np.where(isodd(num_intersections))[0])
     if len(np.where(isodd(num_intersections))[0]) == 0:
         return []
     inside = points[np.where(isodd(num_intersections))]
@@ -299,12 +307,8 @@ def optimize_robot_for_goals(build_robot, goals_list, init=None):
             if not suc:
                 failures += 1
 
-        # objective_value = (sum(abs(x))+10) + (failures) #Pending Left Tab 1
-        # objective_value = (sum(abs(x))**2) * failures #Pending Right Tab 1
-        # objective_value = (max(abs(x))) * failures #Pending Left Tab 2 (0.6)
-        # objective_value = failures #Pending Right Tab 2 (0.6)
         objective_value = sum(abs(x))**failures  #Pending Left Tab 3 (1/.5)
-        # objective_value = max(abs(x)) * failures  #Pending Right Tab 3 (1/.5)
+
         print([objective_value, failures, np.round(x, 2)])
         return objective_value
 
@@ -429,43 +433,6 @@ def process_point(p,
     return [p, success_count / true_rez, successes]
 
 
-
-class WaitText:
-    """
-    Simple helper class to provide feedback to user
-    """
-
-    def __init__(self, text='Processing', iter_limit=5):
-        """
-        Initialize WaitText
-        Args:
-            text: [Optional String] text to display
-            iter_limit: number of '.' to print before resetting
-        """
-        self.text = text
-        self.iter = 0
-        self.iter_limit = iter_limit
-        sys.stdout.write(self.text)
-
-    def print(self):
-        """
-        Updates the waiting message
-        """
-        if self.iter == self.iter_limit:
-            sys.stdout.write('\b' * self.iter_limit)
-            sys.stdout.write('.')
-            self.iter = 0
-        else:
-            sys.stdout.write('.')
-        self.iter += 1
-
-    def done(self):
-        """
-        Prints 'done' and advances to the next line
-        """
-        print(' Done')
-
-
 class WorkspaceAnalyzer:
     """
     Used To Analyze A Variety of Pose Configurations for Defined Robots
@@ -476,30 +443,10 @@ class WorkspaceAnalyzer:
         self.num_procs = 12
         if not self.bot.is_ready():
             print('Please Check Bindings')
-
-    def analyze(self, additional_args):
-        """
-        Begins Analyis Process on Multiple COnfigurations, if Necessary
-        1 Analysis of Task Space- That is given a desired set of
-            poses/trajectories/[position/orientation cloud] what percentage can be reached?
-        2 Analysis of Total Workspace- That is given a robot, what is the
-            total volume it can reach, irrespective of end effector orientation
-        3 Analysis of 6DOF Manipulability - Given a robot, what is the
-            total volume it can reach in which it can position its end effector
-            with a full gamut of orientations
-        4 Analysis of Partial Workspace- Given a subset of orientations,
-            what are the work_space boundaries reachable?
-        5 Analysis of Task Space Orientations - Given a task space, what
-            range of orientations can be had over the task space?
-        Args:
-            configuration: List of tests to be run (booleans corresponding to tests)
-            additional_args: list with arguments in sublists to be run with corresponding tests
-        Returns:
-            None
-        """
-        results = [None, None, None, None, None]
-        if self.configuration[0]:
-            results[0] = self.analyze_task_space(additional_args[0])
+        self.unique_decimals = UNIQUE_DECIMALS
+        self.dof_offset = DOF_OFFSET
+        self.alpha_value = ALPHA_VALUE
+        self.max_dist = MAX_DIST
 
     def analyze_task_space(self, desired_poses):
         """
@@ -531,6 +478,62 @@ class WorkspaceAnalyzer:
         disp(num_successful, 'num_successful')
         disp(num_failed, 'num_failed')
         return num_successful, successful_poses
+
+    def analyze_task_space_manipulability(self, desired_poses,
+            manip_resolution=25, parallel=False, use_jacobian=False):
+        """
+        Given a cloud of points, determine manipulability at each point
+        Args:
+            desired_poses: cloud of desired points
+            manip_resolution: approximate number of points on surface of unit sphere to try
+            parallel: whether or not to use parallel computation
+            use_jacobian: whether or not to use jacobian computation instead of unit sphere
+        Returns:
+            Results: [[Point, success_percentage, successful_orientations],[...],...]
+        """
+
+        num_poses = len(desired_poses)
+        last_iter = num_poses - 1
+
+        results = []
+
+        sphr, _ = fsr.unitSphere(manip_resolution)
+        sphr.append([0, 0, 0])
+        sphere = np.array(sphr) * np.pi
+        true_rez = len(sphere)
+
+        start = time.time()
+        if parallel and num_poses > 8 * self.num_procs:  # Is it *really* worth parallelism?
+            async_results = []
+            with mp.Pool(self.num_procs) as pool:
+                for i in range(num_poses):
+                    progressBar(i,
+                            last_iter,
+                            prefix='Spawning Async Tasks    ',
+                            ETA=start)
+                    async_results.append(pool.apply_async(process_point, (
+                            desired_poses[i], sphere, true_rez, self.bot.robot,
+                            False, use_jacobian)))
+                start_2 = time.time()
+                for i in range(num_poses):
+                    progressBar(i,
+                            last_iter,
+                            prefix='Collecting Async Results',
+                            ETA=start_2)
+                    results.append(async_results[i].get(timeout=2*true_rez))
+        else:
+
+            for i in range(num_poses):
+                progressBar(i,
+                            last_iter,
+                            prefix='Analyzing Cloud',
+                            ETA=start)
+                results.append(process_point(
+                        desired_poses[i], sphere, true_rez, self.bot, False, use_jacobian))
+        end = time.time()
+        disp(end - start, 'Elapsed')
+        return results
+
 
     def _total_workspace_recursive_helper(self, thetas_prior,
                                           iterations_per_dof, dof_iter):
@@ -634,14 +637,14 @@ class WorkspaceAnalyzer:
             #disp(current_cloud[50:60])
             ee_pos, _ = self.bot.FK(theta_list)  #Reset to Neutral Pose
 
-            local_cloud = [fsr.GlobalToLocal(ee_pos, x) for x in current_cloud]
-            if dof_iter < (total_dof - 3):
+            local_cloud = [fsr.globalToLocal(ee_pos, x) for x in current_cloud]
+            if dof_iter < (total_dof - self.dof_offset):
                 point_list = [point.TAA.flatten()[0:3] for point in local_cloud]
 
                 array_temp = np.array(point_list)
-                arr = np.unique(array_temp.round(decimals=2), axis=0)
+                array_filtered = np.unique(array_temp.round(decimals=self.unique_decimals), axis=0)
                 #Could potentially implement the point exclusion section
-                ashape = AlphaShape(array_temp, ALPHA_VALUE)
+                ashape = AlphaShape(array_filtered, self.alpha_value)
                 verts = ashape.verts
                 #local_cloud = []
                 local_cloud = [tm([v[0], v[1], v[2], 0, 0, 0]) for v in verts]
@@ -651,7 +654,7 @@ class WorkspaceAnalyzer:
                 theta_list[dof_iter] = joint_configurations[i]
                 ee_pos, success = self.bot.FK(theta_list)
                 if success:
-                    success_list.extend([fsr.LocalToGlobal(ee_pos, x) for x in local_cloud])
+                    success_list.extend([fsr.localToGlobal(ee_pos, x) for x in local_cloud])
 
             disp('Calculating Iter: ' + str(dof_iter))
             return success_list
@@ -725,12 +728,9 @@ class WorkspaceAnalyzer:
             transformation list of successful 6DOF poses.
         """
         shell_radii = np.linspace(0, shell_range, num_shells)
-        #shells = []
         shells = ([[[y * rad for y in x]
                     for x in fsr.unitSphere(points_per_shell)[0]]
                    for rad in shell_radii])
-        #for rad in shell_radii:
-        #    shells.append([[y * rad for y in x] for x in fsr.unitSphere(points_per_shell)[0]])
         scores = []
         i = 0
         for shell in shells:
@@ -844,10 +844,7 @@ class WorkspaceAnalyzer:
         verification_array = np.zeros((joint_locs_arr_len, 3))
 
         if num_points < 2 * self.num_procs:
-            parallel = False
-
-        if parallel:
-            pool = mp.Pool(self.num_procs)
+            parallel = False  # Verify there's really a need for parallelism
 
         #num_points = len(vertices)
         #points = vertices
@@ -858,71 +855,72 @@ class WorkspaceAnalyzer:
 
         #Step Two: Calculate Manipulability on All points within Maximum reach of the Arm
         if parallel:
-            async_results = []
-            start = time.time()
-            for i in range(num_points):
-                progressBar(i,
-                            num_points - 1,
-                            prefix='Spawning Async Tasks        ',
-                            ETA=start)
-                p = points[i, :]
-                #Ignore points we've already filtered out
-                if bound_shape is not None:
-                    if p not in filtered_points:
+            with mp.Pool(self.num_procs) as pool:
+                async_results = []
+                start = time.time()
+                for i in range(num_points):
+                    progressBar(i,
+                                num_points - 1,
+                                prefix='Spawning Async Tasks        ',
+                                ETA=start)
+                    p = points[i, :]
+                    #Ignore points we've already filtered out
+                    if bound_shape is not None:
+                        if p not in filtered_points:
+                            async_results.append(
+                                pool.apply_async(process_empty, (p, True)))
+                            continue
+                    #Ignore points which are too far away
+                    if fsr.distance(p, bot_base) > self.max_dist:
+                        #TODO(Liam) determine max reach from AShape
                         async_results.append(
                             pool.apply_async(process_empty, (p, True)))
                         continue
-                #Ignore points which are too far away
-                if fsr.Distance(p, bot_base) > MAX_DIST:
-                    #TODO(Liam) determine max reach from AShape
+                    #Ignore points which are too close together
+                    if minimum_dist > 0:
+                        continuance = False
+                        for point in seen_points:
+                            if fsr.distance(point, p) < minimum_dist:
+                                async_results.append(
+                                    pool.apply_async(process_empty, (p, True)))
+                                continuance = True
+                                break
+                        if continuance:
+                            continue
+
                     async_results.append(
-                        pool.apply_async(process_empty, (p, True)))
-                    continue
-                #Ignore points which are too close together
-                if minimum_dist > 0:
-                    continuance = False
-                    for point in seen_points:
-                        if fsr.Distance(point, p) < minimum_dist:
-                            async_results.append(
-                                pool.apply_async(process_empty, (p, True)))
-                            continuance = True
-                            break
-                    if continuance:
+                        pool.apply_async(process_point,
+                                         (p, sphere, true_rez, self.bot.robot,
+                                          True, use_jacobian)))
+                    if minimum_dist > 0:
+                        seen_points.append(p)
+                start = time.time()
+                #print(num_points, len(async_results))
+                for i in range(num_points):
+                    progressBar(i,
+                                num_points - 1,
+                                prefix='Computing Reachability      ',
+                                ETA=start)
+                    results.append(async_results[i].get(timeout=2 * true_rez))
+                start = time.time()
+                for i in range(num_points):
+                    progressBar(i,
+                                num_points - 1,
+                                prefix='Post Processing             ',
+                                ETA=start)
+                    if results[i][3] == []:
                         continue
+                    for j in range(true_rez):
+                        if results[i][3][j] == 0:
+                            continue
+                        for k in range(nd):
 
-                async_results.append(
-                    pool.apply_async(process_point,
-                                     (p, sphere, true_rez, self.bot.robot,
-                                      True, use_jacobian)))
-                if minimum_dist > 0:
-                    seen_points.append(p)
-            start = time.time()
-            #print(num_points, len(async_results))
-            for i in range(num_points):
-                progressBar(i,
-                            num_points - 1,
-                            prefix='Computing Reachability      ',
-                            ETA=start)
-                results.append(async_results[i].get(timeout=2 * true_rez))
-            start = time.time()
-            for i in range(num_points):
-                progressBar(i,
-                            num_points - 1,
-                            prefix='Post Processing             ',
-                            ETA=start)
-                if results[i][3] == []:
-                    continue
-                for j in range(true_rez):
-                    if results[i][3][j] == 0:
-                        continue
-                    for k in range(nd):
-
-                        r = results[i]
-                        ri = r[3]
-                        rj = ri[j]
-                        rk = rj[k]
-                        sample_ind = (i * true_rez * nd) + (j * nd) + k
-                        verification_array[sample_ind, :] = rk[0:3].flatten()
+                            r = results[i]
+                            ri = r[3]
+                            rj = ri[j]
+                            rk = rj[k]
+                            sample_ind = (i * true_rez * nd) + (j * nd) + k
+                            verification_array[sample_ind, :] = rk[0:3].flatten()
         else:
             for i in range(num_points):
                 progressBar(i,
@@ -936,14 +934,14 @@ class WorkspaceAnalyzer:
                         results.append(process_empty(p, True))
                         continue
                 #Ignore points which are too far away
-                if fsr.Distance(p, bot_base) > MAX_DIST:
+                if fsr.distance(p, bot_base) > self.max_dist:
                     results.append(process_empty(p, True))
                     continue
                 #Ignore ponts which are too close together
                 if minimum_dist > 0:
                     continuance = False
                     for point in seen_points:
-                        if fsr.Distance(point, p) < minimum_dist:
+                        if fsr.distance(point, p) < minimum_dist:
                             results.append(process_empty(p, True))
                             continuance = True
                             break
@@ -972,9 +970,9 @@ class WorkspaceAnalyzer:
 
         if approximate_bounding:
             if bound_shape is not None:
-                tri_vecs = np.array(AlphaShape(filtered_points, ALPHA_VALUE).triangles)
+                tri_vecs = np.array(AlphaShape(filtered_points, self.alpha_value).triangles)
             else:
-                tri_vecs = np.array(AlphaShape(points, ALPHA_VALUE).triangles)
+                tri_vecs = np.array(AlphaShape(points, self.alpha_value).triangles)
         else:
             tri_vecs = stl_mesh.vectors
         vec_len = len(tri_vecs)
@@ -984,48 +982,49 @@ class WorkspaceAnalyzer:
 
         num_intersections = np.zeros(joint_locs_arr_len)
         if parallel:
-            # Integer division to determine chunk size to feed to parallel computation
-            # Excess is absorbed by the last chunk
-            chunk_sz = vec_len // self.num_procs
-            async_startup = []
-            for i in range(self.num_procs):
-                progressBar(i, self.num_procs - 1,
-                            'Initializing Moller Trumbore')
-                if i == self.num_procs - 1:
-                    async_startup.append(
-                        pool.apply_async(chunk_moller_trumbore,
-                                         (verification_array,
-                                          tri_vecs[i * chunk_sz:, :],
-                                          np.array([EPSILON, 0, 10 - EPSILON]),
-                                          np.zeros(joint_locs_arr_len))))
-                else:
+            with mp.Pool(self.num_procs) as pool:
+                # Integer division to determine chunk size to feed to parallel computation
+                # Excess is absorbed by the last chunk
+                chunk_sz = vec_len // self.num_procs
+                async_startup = []
+                for i in range(self.num_procs):
+                    progressBar(i, self.num_procs - 1,
+                                'Initializing Moller Trumbore')
+                    if i == self.num_procs - 1:
+                        async_startup.append(
+                            pool.apply_async(chunk_moller_trumbore,
+                                             (verification_array,
+                                              tri_vecs[i * chunk_sz:, :],
+                                              np.array([EPSILON, 0, RAY_UNIT - EPSILON]),
+                                              np.zeros(joint_locs_arr_len))))
+                    else:
 
-                    async_startup.append(
-                        pool.apply_async(
-                            chunk_moller_trumbore,
-                            (verification_array,
-                             tri_vecs[i * chunk_sz:(i + 1) *
-                                              chunk_sz, :],
-                             np.array([EPSILON, 0, 10 - EPSILON
-                                       ]), np.zeros(joint_locs_arr_len))))
+                        async_startup.append(
+                            pool.apply_async(
+                                chunk_moller_trumbore,
+                                (verification_array,
+                                 tri_vecs[i * chunk_sz:(i + 1) *
+                                                  chunk_sz, :],
+                                 np.array([EPSILON, 0, RAY_UNIT - EPSILON
+                                           ]), np.zeros(joint_locs_arr_len))))
 
-            waiter = WaitText('Running Moller Trumbore')
-            while not async_startup[0].ready():
-                waiter.print()
-                time.sleep(.25)
-            waiter.done()
-            moller_results = []
-            start = time.time()
-            for i in range(self.num_procs):
-                progressBar(i,
-                            self.num_procs - 1,
-                            'Retrieving Results          ',
-                            ETA=start)
-                moller_results.append(async_startup[i].get(timeout=100))
-            print('Combining Results...')
-            for i in range(self.num_procs):
-                #print(np.shape(moller_results[i]))
-                num_intersections += moller_results[i]
+                waiter = WaitText('Running Moller Trumbore')
+                while not async_startup[0].ready():
+                    waiter.print()
+                    time.sleep(.25)
+                waiter.done()
+                moller_results = []
+                start = time.time()
+                for i in range(self.num_procs):
+                    progressBar(i,
+                                self.num_procs - 1,
+                                'Retrieving Results          ',
+                                ETA=start)
+                    moller_results.append(async_startup[i].get(timeout=100))
+                print('Combining Results...')
+                for i in range(self.num_procs):
+                    #print(np.shape(moller_results[i]))
+                    num_intersections += moller_results[i]
         else:
             start = time.time()
             for i in range(vec_len):
@@ -1035,7 +1034,7 @@ class WorkspaceAnalyzer:
                             ETA=start)
                 res = moller_trumbore_ray_intersection_array(
                     verification_array, tri_vecs[i, :],
-                    np.array([EPSILON, 0, 10 - EPSILON]))
+                    np.array([EPSILON, 0, RAY_UNIT - EPSILON]))
 
                 # where(res == True)
                 num_intersections[np.where(res)] += 1
@@ -1095,50 +1094,8 @@ class WorkspaceAnalyzer:
 
         point_cloud = grid_cloud_within_volume(shape, grid_resolution)
 
-        start = time.time()
-        num_points = len(point_cloud)
-        sphr, _ = fsr.unitSphere(manip_resolution)
-        sphr.append([0, 0, 0])
-        sphere = np.array(sphr) * np.pi
-        true_rez = len(sphere)
-        results = []
-
-        if parallel:
-            pool = mp.Pool(self.num_procs)
-            async_results = []
-            start = time.time()
-            for i in range(num_points):
-                progressBar(i,
-                            num_points - 1,
-                            prefix='Spawning Async Tasks    ',
-                            ETA=start)
-                async_results.append(
-                    pool.apply_async(process_point,
-                                     (point_cloud[i, :], sphere, true_rez,
-                                      self.bot.robot, False, use_jacobian)))
-            start_2 = time.time()
-            for i in range(num_points):
-                progressBar(i,
-                            num_points - 1,
-                            prefix='Collecting Async Results',
-                            ETA=start_2)
-                results.append(async_results[i].get(timeout=2 * true_rez))
-            end = time.time()
-            disp(end - start, 'Elapsed')
-        else:
-            start = time.time()
-            for i in range(num_points):
-                progressBar(i,
-                            num_points - 1,
-                            prefix='Analyzing Cloud',
-                            ETA=start)
-                p = point_cloud[i, :]
-                results.append(
-                    process_point(p, sphere, true_rez, self.bot, False,
-                                  use_jacobian))
-            end = time.time()
-            disp(end - start, 'Elapsed')
-        return results
+        return self.analyze_task_space_manipulability(point_cloud,
+                manip_resolution, parallel, use_jacobian)
 
     def analyze_manipulability_over_trajectory(self,
                                                point_list,
@@ -1180,84 +1137,22 @@ class WorkspaceAnalyzer:
                     continue
                 start_point = point_list[i]
                 end_point = point_list[i + 1]
-                distance = fsr.ArcDistance(start_point, end_point)
+                distance = fsr.arcDistance(start_point, end_point)
                 if distance < point_interpolation_dist:
                     continue
                 while distance > point_interpolation_dist:
                     if point_interpolation_mode == 1:
-                        start_point = fsr.CloseGap(start_point, end_point,
+                        start_point = fsr.closeLinearGap(start_point, end_point,
                                                    point_interpolation_dist)
                     else:
-                        start_point = fsr.ArcGap(start_point, end_point,
+                        start_point = fsr.closeArcGap(start_point, end_point,
                                                  point_interpolation_dist)
-                    distance = fsr.ArcDistance(start_point, end_point)
+                    distance = fsr.arcDistance(start_point, end_point)
                     new_points.append(start_point)
             point_list = new_points
 
         #Step Two: Determine Manipulability Function
-        manipulability_handle = None
-        if manipulability_mode == 1:
+        results = self.analyze_task_space_manipulability(point_list,
+                manip_resolution, False, manipulability_mode == 1)
 
-            def jacobian_manipulability(point):
-                """
-                Helper function handle for getting jacobian manipulability at a point
-                Args:
-                    point: point to evaluate
-                Returns:
-                    manipulability score
-                """
-                theta, success = self.bot.IK(point)
-                if not success:
-                    return 0
-                ratio_v, ratio_w = calculate_manipulability_score(
-                    self.bot, theta)
-                return (ratio_v + ratio_w) / 2
-
-            manipulability_handle = jacobian_manipulability
-        else:
-            sphr, _ = fsr.unitSphere(manip_resolution)
-            sphr.append([0, 0, 0])
-            sphere = np.array(sphr) * np.pi
-            true_rez = len(sphere)
-
-            def spheroid_manipulability(point,
-                                        sphere=sphere,
-                                        true_rez=true_rez):
-                """
-                Helper internal function for calculating unit sphere manipulability
-                Args:
-                    point: point to calculate at
-                    sphere: unit sphere (radians)
-                    true_rez: number of points in the unit sphere
-                Returns:
-                    manipulability score
-                """
-                success_count = 0
-                _, success = self.bot.IK(point)
-                if success:
-                    success_count += 1
-                t_point = tm()
-                for i in range(true_rez):
-                    rot = sphere[i, :]
-                    t_point[0:3] = point[0:3]
-                    t_point[3:6] = rot.flatten()
-                    _, success = self.bot.IK(t_point)
-                    if success:
-                        success_count += 1
-                return success_count / (true_rez + 1)
-
-            manipulability_handle = spheroid_manipulability
-
-        #Step Three: Calculate Manipulability Along The Trajectory
-        scores = []
-        point_list_len = len(point_list)
-        start = time.time()
-        for i in range(point_list_len):
-            progressBar(i,
-                        point_list_len - 1,
-                        'Analyzing Manipulability',
-                        ETA=start)
-            scores.append(
-                (point_list[i], manipulability_handle(point_list[i])))
-
-        return scores
+        return results
