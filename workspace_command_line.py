@@ -9,7 +9,7 @@ import sys
 
 #Other Module Imports
 from faser_math import tm
-from faser_plotting.Draw.Draw import DrawRectangle, DrawAxes
+from faser_plotting.Draw.Draw import DrawRectangle, DrawAxes, drawMesh
 from faser_robot_kinematics import loadArmFromURDF
 from faser_utils.disp.disp import disp
 
@@ -468,8 +468,7 @@ class CommandExecutor:
                     col = score_point(score)
                     DrawRectangle(tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
                         [.25] * 3, ax, c=col, a=TRANSPARENCY_CONSTANT)
-            ax.add_collection3d(Poly3DCollection(
-                mesh.vectors, facecolors='b', edgecolors='r', linewidths=1, alpha=0.1))
+            drawMesh(mesh, ax)
             plt.show()
         self.pose_results_object_surface = results
         if save_output:

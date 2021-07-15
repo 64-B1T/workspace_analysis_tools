@@ -1,20 +1,24 @@
-import math
-import sys
-import numpy as np
-import time
+# Utility Imports
 from datetime import datetime
+import itertools
+import math
+import multiprocessing as mp
+import numpy as np
+import os
+import scipy as sci
+import sys
+import time
+
+#This module imports
 from alpha_shape import AlphaShape
 from workspace_helper_functions import WaitText
-from stl import mesh
-import scipy as sci
-# from faser_plotting.Draw.Draw import *
-import multiprocessing as mp
-import itertools
+
+# Other module imports
 sys.path.append('../')
-from faser_utils.disp.disp import disp, progressBar
-from faser_math import tm, fsr
 from robot_collisions import createMesh, ColliderManager, ColliderArm, ColliderObstacles
-import os
+from faser_math import tm, fsr
+from faser_utils.disp.disp import disp, progressBar
+
 
 #Constant Values
 EPSILON = .000001  # Deviation Acceptable for Moller Trumbore
@@ -41,6 +45,14 @@ ALPHA_VALUE = 1.2
 
 # Helper Functions Tha You Probably Shouldn't Need To Call Directly
 def gen_manip_sphere(manip_resolution):
+    """
+    Craft a manipulability sphere for use in testing manipulability resolution
+    Args:
+        manip_resolution: approximate number of points in sphere
+    Returns:
+        sphere: points in sphere
+        true_rez: thhe true number of points in the sphere
+    """
     sphr, _ = fsr.unitSphere(manip_resolution)
     sphr.append([0, 0, 0])
     sphere = np.array(sphr) * np.pi
@@ -178,8 +190,7 @@ def moller_trumbore_ray_intersection_array(points,
     return res
 
 
-def chunk_moller_trumbore(test_points, triangles, epsilon_vector,
-                          result_array):
+def chunk_moller_trumbore(test_points, triangles, epsilon_vector, result_array):
     """
     Perform a chunk of moller_trumbore, useful for parallel processing.
 
@@ -399,10 +410,17 @@ def process_empty(p):
 
 
 def get_collision_data(collision_manager):
+    """
+    Helper function for determining if a collision is ocurring
+    Args:
+        collision_manager: ColliderManager object populated with an arm and optional obstacle
+    Returns:
+        boolean for collision
+    """
     collision_manager.update()
     inter_collisions = False
     if len(collision_manager.collision_objects) > 1:
-        inter_collisions = collision_manager.checkollisions()[0]
+        inter_collisions = collision_manager.checkCollisions()[0]
     solo_collisions = collision_manager.collision_objects[0].checkInternalCollisions()
     if inter_collisions or solo_collisions:
         return True
@@ -427,7 +445,7 @@ def process_point(p,
         collision_detect: [Optional Bool] detect collisions (Default False)
         collision_manager: [Optional ColliderManager] provide if setting collision Detect on
     Returns:
-        Results: [point, success_percentage, successful_orientations]
+        Results: [point, success_percentage, successful_orientations, successful_thetas]
     """
     successes = []
     thetas = []
@@ -519,6 +537,22 @@ class WorkspaceAnalyzer:
 
     def parallel_process_point_cloud(self, num_poses, desired_poses, sphere, true_rez,
             use_jacobian=False, collision_detect=False, stl_mesh=None, exempt_ee=False):
+        """
+        Run a point cloud through parallel processing, potentially with collision checking
+
+        Args:
+            num_poses: number of points to calculate
+            desired_poses: points to calculate
+            sphere: unit sphere to use
+            true_rez: true resolution of the unit sphere
+            use_jacobian: bool to use a jacobian
+            collision_detect: bool to detect collisions
+            stl_mesh: optional stl mesh object to use for collision checking
+            exempt_ee: optional exemption of end effector from collision checking
+
+        Returns:
+            Results: [[point, success_percentage, successful_orientations, successful_thetas],[]]
+        """
         async_results = []
         results = []
         start = time.time()
@@ -872,15 +906,16 @@ class WorkspaceAnalyzer:
             mesh: the loaded STL mesh
         """
 
-        stl_mesh = createMesh(object_pose, object_file_name)
+        stl_mesh = createMesh(tm(), object_file_name)
         stl_mesh.vertices = stl_mesh.vertices * object_scale
+        stl_mesh.apply_transform(object_pose.gTM())
 
-        stl_mesh = mesh.Mesh.from_file(object_file_name)
+        #stl_mesh = mesh.Mesh.from_file(object_file_name)
 
         raw_points = []
         for i in range(len(stl_mesh.vertices)):
-            raw_points.append(mesh.vertices[i, :])
-        points = np.unique(np.array(raw_points))
+            raw_points.append(stl_mesh.vertices[i, :])
+        points = np.unique(np.array(raw_points), axis=0)
 
         if bound_shape is not None:
             #Filter out everything we know the robot can't reach anyway
@@ -903,7 +938,7 @@ class WorkspaceAnalyzer:
 
         if collision_detect:
             collision_manager = ColliderManager()
-            collision_manager.bind(ColliderArm(self.link, 'model'))
+            collision_manager.bind(ColliderArm(self.bot, 'model'))
             obstacle_manager = ColliderObstacles('object_surface')
             obstacle_manager.addMesh('object', stl_mesh)
             #collision_manager.bind(ColliderObstacles())
@@ -915,78 +950,56 @@ class WorkspaceAnalyzer:
         #Step One: Filter Out All points Beyond Maximum Reach of the Arm
 
         #Step Two: Calculate Manipulability on All points within Maximum reach of the Arm
-        if parallel:
-            with mp.Pool(self.num_procs) as pool:
-                empty_results = []
-                true_points = []
-                start = time.time()
-                for i in range(num_points):
-                    progressBar(i,
-                                num_points - 1,
-                                prefix='Preprocessing Data          ',
-                                ETA=start)
-                    p = points[i, :]
-                    #Ignore points we've already filtered out
-                    if bound_shape is not None:
-                        if p not in filtered_points:
-                            empty_results.append(process_empty(p))
-                            continue
-                    #Ignore points which are too far away
-                    if fsr.distance(p, bot_base) > self.max_dist:
-                        #TODO(Liam) determine max reach from AShape
+
+        empty_results = []
+        true_points = []
+        start = time.time()
+        for i in range(num_points):
+            progressBar(i,
+                        num_points - 1,
+                        prefix='Preprocessing Data          ',
+                        ETA=start)
+            p = points[i, :]
+            #Ignore points we've already filtered out
+            if bound_shape is not None:
+                if p not in filtered_points:
+                    empty_results.append(process_empty(p))
+                    continue
+            #Ignore points which are too far away
+            if fsr.distance(p, bot_base) > self.max_dist:
+                #TODO(Liam) determine max reach from AShape
+                empty_results.append(process_empty(p))
+                continue
+            #Ignore points which are too close together
+            if minimum_dist > 0:
+                continuance = False
+                for point in seen_points:
+                    if fsr.distance(point, p) < minimum_dist:
                         empty_results.append(process_empty(p))
-                        continue
-                    #Ignore points which are too close together
-                    if minimum_dist > 0:
-                        continuance = False
-                        for point in seen_points:
-                            if fsr.distance(point, p) < minimum_dist:
-                                empty_results.append(process_empty(p))
-                                continuance = True
-                                break
-                        if continuance:
-                            continue
-                    true_points.append(p)
-                    if minimum_dist > 0:
-                        seen_points.append(p)
+                        continuance = True
+                        break
+                if continuance:
+                    continue
+            true_points.append(p)
+            if minimum_dist > 0:
+                seen_points.append(p)
+        if parallel:
+            results = self.parallel_process_point_cloud(len(true_points), true_points,
+                    sphere, true_rez, use_jacobian,
+                    collision_detect, stl_mesh, exempt_ee)
 
-                results = self.parallel_process_point_cloud(len(true_points), true_points,
-                        sphere, true_rez, use_jacobian,
-                        collision_detect, stl_mesh, exempt_ee)
 
-                results.extend(empty_results)
         else:
-            for i in range(num_points):
+            for i in range(len(true_points)):
+                p = true_points[i, :]
                 progressBar(i,
                             num_points - 1,
                             prefix='Computing Reachability      ',
                             ETA=start)
-                p = points[i, :]
-                #Ignore points we've already filtered out
-                if bound_shape is not None:
-                    if p not in filtered_points:
-                        results.append(process_empty(p))
-                        continue
-                #Ignore points which are too far away
-                if fsr.distance(p, bot_base) > self.max_dist:
-                    results.append(process_empty(p))
-                    continue
-                #Ignore ponts which are too close together
-                if minimum_dist > 0:
-                    continuance = False
-                    for point in seen_points:
-                        if fsr.distance(point, p) < minimum_dist:
-                            results.append(process_empty(p))
-                            continuance = True
-                            break
-                    if continuance:
-                        continue
                 pdone = process_point(p, sphere, true_rez, self.bot, use_jacobian,
                         collision_detect, collision_manager)
-                if minimum_dist > 0:
-                    seen_points.append(p)
                 results.append(pdone)
-
+        results.extend(empty_results)
         return results, stl_mesh
 
     def analyze_manipulability_within_volume(self,
