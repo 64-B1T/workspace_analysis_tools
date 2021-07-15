@@ -585,6 +585,39 @@ class WorkspaceAnalyzer:
                 results.extend(async_results[i].get(timeout=5*true_rez))
         return results
 
+    def analyze_joint_related_to_end_effector_vals(self, manipulability_space, joint_goal_norm, angular = False):
+        """
+        Calculates the minimum joint values to relate to desired end effector norm
+        Works for velocities and torques
+
+        Args:
+            manipulability_space: results from a manipulability analysis
+            joint_goal_norm: goal joint norm
+
+        Results:
+            augmented results with joint vals added at each point
+        """
+        inds = [3, 6]
+        if angular:
+            inds = [0, 3]
+        def minimize_ee_norm(joint_vals):
+            ee_vals = self.bot.robot._jointsToEndEffectorJacobian(joint_vals).flatten()
+            new_norm = np.linalg.norm(ee_vals[inds[0]:inds[1]])
+            if new_norm > joint_goal_norm:
+                return new_norm - joint_goal_norm
+            else:
+                return joint_goal_norm + new_norm
+        results = []
+        xs = sci.optimize.fmin(minimize_ee_norm, manipulability_space[0][3][0], disp = False)
+        for c in manipulability_space:
+            res_sub = []
+            for joint_config in c[3]:
+                self.bot.FK(joint_config)
+                xs = sci.optimize.fmin(minimize_ee_norm, xs, disp = False)
+                res_sub.append([joint_config, xs])
+            results.append([c[0], res_sub])
+        return results
+
     def analyze_task_space(self, desired_poses):
         """
         Analyzes a cloud of potential poses, returns the percentage
