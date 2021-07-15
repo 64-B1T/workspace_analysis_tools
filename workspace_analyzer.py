@@ -458,6 +458,54 @@ def process_point(p,
         return [p, success_count / true_rez, successes, thetas, jlocs]
     return [p, success_count / true_rez, successes, thetas]
 
+def chunk_point_processing(points, sphere, true_rez, bot,
+        store_joint_locations, use_jacobian, collision_detect,
+        stl_mesh = None, exempt_ee = False, display_eta = False):
+    """
+    Process points in a chunk (for parallel computation)
+
+    Args:
+        points: list of points to process
+        sphere: unit sphere to use
+        true_rez: true resolution of the unit sphere
+        bot: reference to robot object
+        store_joint_locations: bool to store joint locations
+        use_jacobian: bool to use a jacobian
+        collision_detect: bool to detect collisions
+        stl_mesh: optional stl mesh object to use for collision checking
+        exempt_ee: optional exemption of end effector from collision checking
+        display_eta: optional boolean to display a progress bar
+
+    Returns:
+        list: results (as of process point)
+
+    """
+
+    collision_manager = None
+    if collision_detect:
+        collision_manager = ColliderManager()
+        collision_manager.bind(ColliderArm(bot, 'model'))
+        if stl_mesh is not None:
+            obstacle = ColliderObstacles('object_surface')
+            obstacle.addMesh('object', stl_mesh)
+            collision_manager.bind(obstacle)
+        if exempt_ee:
+            collision_manager.collision_objects[0].deleteEE()
+    results = []
+    last_iter = len(points)
+    start = time.time()
+    for i in range(last_iter):
+        results.append(process_point(points[i], sphere,
+                true_rez, bot, store_joint_locations, use_jacobian,
+                collision_detect, collision_manager))
+        if display_eta:
+            progressBar(i,
+                    last_iter - 1,
+                    prefix='Chunked Point Processing',
+                    ETA=start)
+
+    return results
+
 
 class WorkspaceAnalyzer:
     """
@@ -521,7 +569,6 @@ class WorkspaceAnalyzer:
 
         num_poses = len(desired_poses)
         last_iter = num_poses - 1
-
         results = []
 
         sphr, _ = fsr.unitSphere(manip_resolution)
@@ -531,29 +578,36 @@ class WorkspaceAnalyzer:
 
         collision_manager = None
 
-
         start = time.time()
         if parallel and num_poses > 8 * self.num_procs:  # Is it *really* worth parallelism?
             async_results = []
-            if collision_detect:
-                collision_manager = ColliderManager()
-                collision_manager.bind(ColliderArm(self.bot.robot, 'model'))
+            chunk_sz = num_poses // self.num_procs
             with mp.Pool(self.num_procs) as pool:
-                for i in range(num_poses):
+                for i in range(self.num_procs):
                     progressBar(i,
-                            last_iter,
-                            prefix='Spawning Async Tasks    ',
+                            self.num_procs - 1,
+                            prefix='Spawning Async Tasks        ',
                             ETA=start)
-                    async_results.append(pool.apply_async(process_point, (
-                            desired_poses[i], sphere, true_rez, self.bot.robot,
-                            False, use_jacobian, collision_detect, collision_manager)))
+                    display_eta = i == (self.num_procs - 1)
+                    small_ind = i * chunk_sz
+                    large_ind = (i + 1) * chunk_sz
+                    if display_eta:
+                        large_ind = num_poses
+                    async_results.append(pool.apply_async(chunk_point_processing, (
+                            desired_poses[small_ind:large_ind], sphere, true_rez, self.bot.robot,
+                            False, use_jacobian, collision_detect, None, False, display_eta)))
+                waiter = WaitText('Running Point Detection    ')
+                while not async_results[-1].ready():
+                    waiter.print()
+                    time.sleep(.5)
+                waiter.done()
                 start_2 = time.time()
-                for i in range(num_poses):
+                for i in range(self.num_procs):
                     progressBar(i,
-                            last_iter,
+                            self.num_procs - 1,
                             prefix='Collecting Async Results',
                             ETA=start_2)
-                    results.append(async_results[i].get(timeout=5*true_rez))
+                    results.extend(async_results[i].get(timeout=5*true_rez))
         else:
             if collision_detect:
                 collision_manager = ColliderManager()
