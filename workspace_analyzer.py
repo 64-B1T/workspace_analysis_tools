@@ -991,7 +991,7 @@ class WorkspaceAnalyzer:
 
         else:
             for i in range(len(true_points)):
-                p = true_points[i, :]
+                p = true_points[i]
                 progressBar(i,
                             num_points - 1,
                             prefix='Computing Reachability      ',
