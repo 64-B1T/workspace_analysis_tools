@@ -618,6 +618,33 @@ class WorkspaceAnalyzer:
             results.append([c[0], res_sub])
         return results
 
+    def analyze_matching_joint_torques(self, manipulability_space,
+            mass_cg, mass, grav_vector = np.array([0, 0, -9.8])):
+        """
+        Calculate joint torques for a given end effector wrench
+
+        Args:
+            manipulability_space: results list from earlier manipulability analysis
+            mass_cg: center of gravity tm for the applied mass relative to EE (global)
+            mass: mass in kilograms of payload
+            grav_vector: applied gravity. Normally this would be [0, 0, -9.8] default
+
+        Returns:
+            list: list corresponding joint torques and thetas to points in manipulability space
+
+        """
+        results = []
+        for c in manipulability_space:
+            res_sub = []
+            for joint_config in c[3]:
+                self.bot.FK(joint_config)
+                ee_wrench = fsr.makeWrench(self.bot.getEE() @ mass_cg, mass, grav_vector)
+                torques = self.bot.robot.staticForceWithLinkMasses(joint_config, ee_wrench)
+                res_sub.append([joint_config, torques])
+            results.append([c[0], res_sub])
+
+        return results
+
     def analyze_task_space(self, desired_poses):
         """
         Analyzes a cloud of potential poses, returns the percentage
