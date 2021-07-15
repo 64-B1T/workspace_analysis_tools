@@ -501,6 +501,7 @@ def chunk_point_processing(points, sphere, true_rez, bot,
             collision_manager.bind(obstacle)
         if exempt_ee:
             collision_manager.collision_objects[0].deleteEE()
+            collision_manager.collision_objects[0].deleteEE()
     results = []
     last_iter = len(points)
     start = time.time()
@@ -513,7 +514,6 @@ def chunk_point_processing(points, sphere, true_rez, bot,
                     last_iter - 1,
                     prefix='Chunked Point Processing',
                     ETA=start)
-
     return results
 
 
