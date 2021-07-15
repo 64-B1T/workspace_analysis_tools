@@ -14,7 +14,7 @@ sys.path.append('../')
 from faser_utils.disp.disp import disp, progressBar
 from faser_math import tm, fsr
 from robot_collisions import createMesh, ColliderManager, ColliderArm, ColliderObstacles
-
+import os
 
 #Constant Values
 EPSILON = .000001  # Deviation Acceptable for Moller Trumbore
@@ -40,6 +40,13 @@ ALPHA_VALUE = 1.2
 
 
 # Helper Functions Tha You Probably Shouldn't Need To Call Directly
+def gen_manip_sphere(manip_resolution):
+    sphr, _ = fsr.unitSphere(manip_resolution)
+    sphr.append([0, 0, 0])
+    sphere = np.array(sphr) * np.pi
+    true_rez = len(sphere)
+    return sphere, true_rez
+
 def grid_cloud_within_volume(shape, resolution=.25):
     """
     Fill an alpha shape with a grid of points according to the resolution parameter.
@@ -77,7 +84,6 @@ def grid_cloud_within_volume(shape, resolution=.25):
     pruned_cloud = inside_alpha_shape(shape, cloud)
     print('Pruned Cloud Size:' + str(len(pruned_cloud)))
     return pruned_cloud
-
 
 def moller_trumbore_ray_intersection(origin_point,
                                      triangle,
@@ -381,18 +387,15 @@ def calculate_manipulability_score(bot, theta):
     return manipulability_ratio_v, manipulability_ratio_w
 
 
-def process_empty(p, store_joint_locations=False):
+def process_empty(p):
     """
     Helper function for multiprocessing. Literally returns empty.
     Args:
         p: Point
-        store_joint_locations: [Optional Boolean]
     Returns:
         [p, 0, []]
     """
-    if store_joint_locations:
-        return [p, 0, [], [], []]
-    return [p, 0, [], []]
+    return [p, 0, [], [], []]
 
 
 def get_collision_data(collision_manager):
@@ -409,7 +412,6 @@ def process_point(p,
                   sphere,
                   true_rez,
                   bot,
-                  store_joint_locations=False,
                   use_jacobian=False,
                   collision_detect=False,
                   collision_manager=None):
@@ -421,7 +423,6 @@ def process_point(p,
         sphere: unit sphere
         true_rez: the true amount of points inside the unit sphere
         bot: reference to the robot object
-        store_joint_locations: [Optional Boolean] whether or not to store joint locations
         use_jacobian: [Optional Bool] Use Jacobian instead of unit sphere
         collision_detect: [Optional Bool] detect collisions (Default False)
         collision_manager: [Optional ColliderManager] provide if setting collision Detect on
@@ -438,8 +439,6 @@ def process_point(p,
         if score == 0:
             return [p, 0, [], []]
         return [p, score, [max_pos], [theta]]
-    elif store_joint_locations:
-        jlocs = []
     for j in range(true_rez):
         rot = sphere[j, :]
         goal = tm([p[0], p[1], p[2], rot[0], rot[1], rot[2]])
@@ -449,18 +448,12 @@ def process_point(p,
         if suc:
             thetas.append(theta)
             successes.append(rot)
-            if store_joint_locations:
-                jlocs.append(bot.getJointTransforms())
             success_count += 1
-        elif store_joint_locations:
-            jlocs.append(0)
-    if store_joint_locations:
-        return [p, success_count / true_rez, successes, thetas, jlocs]
     return [p, success_count / true_rez, successes, thetas]
 
 def chunk_point_processing(points, sphere, true_rez, bot,
-        store_joint_locations, use_jacobian, collision_detect,
-        stl_mesh = None, exempt_ee = False, display_eta = False):
+        use_jacobian, collision_detect, stl_mesh = None,
+        exempt_ee = False, display_eta = False):
     """
     Process points in a chunk (for parallel computation)
 
@@ -469,7 +462,6 @@ def chunk_point_processing(points, sphere, true_rez, bot,
         sphere: unit sphere to use
         true_rez: true resolution of the unit sphere
         bot: reference to robot object
-        store_joint_locations: bool to store joint locations
         use_jacobian: bool to use a jacobian
         collision_detect: bool to detect collisions
         stl_mesh: optional stl mesh object to use for collision checking
@@ -496,7 +488,7 @@ def chunk_point_processing(points, sphere, true_rez, bot,
     start = time.time()
     for i in range(last_iter):
         results.append(process_point(points[i], sphere,
-                true_rez, bot, store_joint_locations, use_jacobian,
+                true_rez, bot, use_jacobian,
                 collision_detect, collision_manager))
         if display_eta:
             progressBar(i,
@@ -514,13 +506,50 @@ class WorkspaceAnalyzer:
 
     def __init__(self, linkedRobot):
         self.bot = linkedRobot
-        self.num_procs = 12
+        cpu_count = os.cpu_count()
+        self.num_procs = 4
+        if cpu_count is not None:
+            self.num_procs = cpu_count - 1 # Leave a CPU for doing other things
         if not self.bot.is_ready():
             print('Please Check Bindings')
         self.unique_decimals = UNIQUE_DECIMALS
         self.dof_offset = DOF_OFFSET
         self.alpha_value = ALPHA_VALUE
         self.max_dist = MAX_DIST
+
+    def parallel_process_point_cloud(self, num_poses, desired_poses, sphere, true_rez,
+            use_jacobian=False, collision_detect=False, stl_mesh=None, exempt_ee=False):
+        async_results = []
+        results = []
+        start = time.time()
+        chunk_sz = num_poses // self.num_procs
+        with mp.Pool(self.num_procs) as pool:
+            for i in range(self.num_procs):
+                progressBar(i,
+                        self.num_procs - 1,
+                        prefix='Spawning Async Tasks        ',
+                        ETA=start)
+                display_eta = i == (self.num_procs - 1)
+                small_ind = i * chunk_sz
+                large_ind = (i + 1) * chunk_sz
+                if display_eta:
+                    large_ind = num_poses
+                async_results.append(pool.apply_async(chunk_point_processing, (
+                        desired_poses[small_ind:large_ind], sphere, true_rez, self.bot.robot,
+                        use_jacobian, collision_detect, stl_mesh, exempt_ee, display_eta)))
+            waiter = WaitText('Running Point Detection    ')
+            while not async_results[-1].ready():
+                waiter.print()
+                time.sleep(.5)
+            waiter.done()
+            start_2 = time.time()
+            for i in range(self.num_procs):
+                progressBar(i,
+                        self.num_procs - 1,
+                        prefix='Collecting Async Results',
+                        ETA=start_2)
+                results.extend(async_results[i].get(timeout=5*true_rez))
+        return results
 
     def analyze_task_space(self, desired_poses):
         """
@@ -571,43 +600,14 @@ class WorkspaceAnalyzer:
         last_iter = num_poses - 1
         results = []
 
-        sphr, _ = fsr.unitSphere(manip_resolution)
-        sphr.append([0, 0, 0])
-        sphere = np.array(sphr) * np.pi
-        true_rez = len(sphere)
+        sphere, true_rez = gen_manip_sphere(manip_resolution)
 
         collision_manager = None
 
         start = time.time()
         if parallel and num_poses > 8 * self.num_procs:  # Is it *really* worth parallelism?
-            async_results = []
-            chunk_sz = num_poses // self.num_procs
-            with mp.Pool(self.num_procs) as pool:
-                for i in range(self.num_procs):
-                    progressBar(i,
-                            self.num_procs - 1,
-                            prefix='Spawning Async Tasks        ',
-                            ETA=start)
-                    display_eta = i == (self.num_procs - 1)
-                    small_ind = i * chunk_sz
-                    large_ind = (i + 1) * chunk_sz
-                    if display_eta:
-                        large_ind = num_poses
-                    async_results.append(pool.apply_async(chunk_point_processing, (
-                            desired_poses[small_ind:large_ind], sphere, true_rez, self.bot.robot,
-                            False, use_jacobian, collision_detect, None, False, display_eta)))
-                waiter = WaitText('Running Point Detection    ')
-                while not async_results[-1].ready():
-                    waiter.print()
-                    time.sleep(.5)
-                waiter.done()
-                start_2 = time.time()
-                for i in range(self.num_procs):
-                    progressBar(i,
-                            self.num_procs - 1,
-                            prefix='Collecting Async Results',
-                            ETA=start_2)
-                    results.extend(async_results[i].get(timeout=5*true_rez))
+            results = self.parallel_process_point_cloud(num_poses, desired_poses, sphere, true_rez,
+                    use_jacobian=use_jacobian, collision_detect=False)
         else:
             if collision_detect:
                 collision_manager = ColliderManager()
@@ -619,7 +619,7 @@ class WorkspaceAnalyzer:
                             ETA=start)
                 results.append(process_point(
                         desired_poses[i], sphere, true_rez, self.bot,
-                        False, use_jacobian, collision_detect, collision_manager))
+                        use_jacobian, collision_detect, collision_manager))
         end = time.time()
         disp(end - start, 'Elapsed')
         return results
@@ -835,7 +835,7 @@ class WorkspaceAnalyzer:
                             prefix='Analyzing Reachability')
                 i += 1
                 results.append(process_point(point, None, None, self.bot,
-                        False, True, collision_detect, collision_manager))
+                        True, collision_detect, collision_manager))
         return results
         #find a way to manipulate here for optimal reachability
 
@@ -888,11 +888,8 @@ class WorkspaceAnalyzer:
             if len(filtered_points) == 0:
                 return [], stl_mesh
 
-        sphr, _ = fsr.unitSphere(manip_resolution)
         num_points = len(points)
-        sphr.append([0, 0, 0])
-        sphere = np.array(sphr) * np.pi
-        true_rez = len(sphere)
+        sphere, true_rez = gen_manip_sphere(manip_resolution)
         results = []
         bot_base = self.bot.getJointTransforms()[0]
 
@@ -920,52 +917,44 @@ class WorkspaceAnalyzer:
         #Step Two: Calculate Manipulability on All points within Maximum reach of the Arm
         if parallel:
             with mp.Pool(self.num_procs) as pool:
-                async_results = []
+                empty_results = []
+                true_points = []
                 start = time.time()
                 for i in range(num_points):
                     progressBar(i,
                                 num_points - 1,
-                                prefix='Spawning Async Tasks        ',
+                                prefix='Preprocessing Data          ',
                                 ETA=start)
                     p = points[i, :]
                     #Ignore points we've already filtered out
                     if bound_shape is not None:
                         if p not in filtered_points:
-                            async_results.append(
-                                pool.apply_async(process_empty, (p, True)))
+                            empty_results.append(process_empty(p))
                             continue
                     #Ignore points which are too far away
                     if fsr.distance(p, bot_base) > self.max_dist:
                         #TODO(Liam) determine max reach from AShape
-                        async_results.append(
-                            pool.apply_async(process_empty, (p, True)))
+                        empty_results.append(process_empty(p))
                         continue
                     #Ignore points which are too close together
                     if minimum_dist > 0:
                         continuance = False
                         for point in seen_points:
                             if fsr.distance(point, p) < minimum_dist:
-                                async_results.append(
-                                    pool.apply_async(process_empty, (p, True)))
+                                empty_results.append(process_empty(p))
                                 continuance = True
                                 break
                         if continuance:
                             continue
-
-                    async_results.append(
-                        pool.apply_async(process_point,
-                                         (p, sphere, true_rez, self.bot.robot,
-                                          True, use_jacobian, collision_detect, collision_manager)))
+                    true_points.append(p)
                     if minimum_dist > 0:
                         seen_points.append(p)
-                start = time.time()
-                #print(num_points, len(async_results))
-                for i in range(num_points):
-                    progressBar(i,
-                                num_points - 1,
-                                prefix='Computing Reachability      ',
-                                ETA=start)
-                    results.append(async_results[i].get(timeout=2 * true_rez))
+
+                results = self.parallel_process_point_cloud(len(true_points), true_points,
+                        sphere, true_rez, use_jacobian,
+                        collision_detect, stl_mesh, exempt_ee)
+
+                results.extend(empty_results)
         else:
             for i in range(num_points):
                 progressBar(i,
@@ -976,24 +965,24 @@ class WorkspaceAnalyzer:
                 #Ignore points we've already filtered out
                 if bound_shape is not None:
                     if p not in filtered_points:
-                        results.append(process_empty(p, True))
+                        results.append(process_empty(p))
                         continue
                 #Ignore points which are too far away
                 if fsr.distance(p, bot_base) > self.max_dist:
-                    results.append(process_empty(p, True))
+                    results.append(process_empty(p))
                     continue
                 #Ignore ponts which are too close together
                 if minimum_dist > 0:
                     continuance = False
                     for point in seen_points:
                         if fsr.distance(point, p) < minimum_dist:
-                            results.append(process_empty(p, True))
+                            results.append(process_empty(p))
                             continuance = True
                             break
                     if continuance:
                         continue
-                pdone = process_point(p, sphere, true_rez, self.bot, True,
-                                      use_jacobian, collision_detect, collision_manager)
+                pdone = process_point(p, sphere, true_rez, self.bot, use_jacobian,
+                        collision_detect, collision_manager)
                 if minimum_dist > 0:
                     seen_points.append(p)
                 results.append(pdone)
