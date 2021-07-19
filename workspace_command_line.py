@@ -4,6 +4,7 @@
 import importlib
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+import numpy as np
 import pickle
 import sys
 
@@ -46,6 +47,9 @@ cmd_str_analyze_manipulability_object_surface = 'objectSurfaceManipulability'
 cmd_str_manipulability_within_volume = 'manipulabilityWithinVolume'
 cmd_str_manipulability_over_trajectory = 'manipulabilityOverTrajectory'
 cmd_str_view_manipulability_space = 'viewManipulabilitySpace'
+cmd_str_analyze_force_norm = 'analyzeForceNorm'
+cmd_str_analyze_velocity_norm = 'analyzeVelocityNorm'
+cmd_str_analyze_wrench_torques = 'analyzeWrenchTorques'
 cmd_str_schedule_sequence = 'newSequence'
 cmd_str_start_sequence = 'startSequence'
 cmd_str_view_sequence = 'viewSequence'
@@ -66,6 +70,9 @@ valid_commands = [
     cmd_str_manipulability_over_trajectory,
     cmd_str_view_manipulability_space,
     cmd_str_schedule_sequence,
+    cmd_str_analyze_force_norm,
+    cmd_str_analyze_velocity_norm,
+    cmd_str_analyze_wrench_torques,
     cmd_str_start_sequence,
     cmd_str_view_sequence,
     cmd_str_load_sequence,
@@ -111,6 +118,13 @@ cmd_flag_trajectory_arc_interp = '-arcInterpolation'
 #Workspace Viewer Flags
 cmd_flag_viewer_draw_alpha = '-alphaFile'
 cmd_flag_viewer_draw_slices = '-draw3DSlices'
+
+#Vels and TOrques Flags
+cmd_flag_jac_norm = '-targetNorm'
+cmd_flag_jac_grav = '-grav'
+cmd_flag_jac_origin = '-massCG'
+cmd_flag_jac_mass = '-mass'
+cmd_flag_jac_angular = '-angular'
 
 
 class CommandExecutor:
@@ -242,6 +256,27 @@ class CommandExecutor:
         """
         with open(out_file_name, 'wb') as fp:
             pickle.dump(results, fp)
+
+    def plot_joints_to_ee(self, results, grid_rez=0.2):
+        """
+        Plots to matplotlib instance
+        Args:
+            results: results super-list
+            grid_rez: size of cubes to plot
+        """
+        plt.figure()
+        ax = plt.axes(projection='3d')
+        for r in results:
+            min = np.inf
+            for j in r:
+                if min > max(j[1]):
+                    min = max(j[1])
+            col = score_point(1 - min)
+            DrawRectangle(
+                tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
+                [grid_rez]*3, ax, c=col, a=TRANSPARENCY_CONSTANT)
+            #disp('Plotting')
+        plt.show()
 
     def plot_reachability_space(self, pose_cloud):
         """
@@ -608,6 +643,90 @@ class CommandExecutor:
             draw_slices = True
 
         view_workspace(object_file_name, draw_alpha_shape, alpha_shape_file, draw_slices)
+
+    def _relate_joints_to_ee(self, cmds):
+        """
+        Helper function for cmd_analyze_velocity_norm and cmd_analyze_torque_norms
+
+        Args:
+            cmds: command strings
+        Returns:
+            list: target values related to givens
+        """
+        targetNorm = 0
+        if cmd_flag_input_file in cmds:
+            object_file_name = post_flag(cmd_flag_input_file, cmds)
+        if cmd_flag_jac_norm in cmds:
+            targetNorm = float(post_flag(cmd_flag_jac_norm))
+        angular = cmd_flag_jac_angular in cmds
+        with open(object_file_name, 'rb') as fp:
+            data = pickle.load(fp)
+        results = self.analyzer.analyze_joint_related_to_end_effector_vals(
+                data, targetNorm, angular)
+        save_output, out_file_name = self.save_results_flag(cmds)
+        if save_output:
+            self.save_to_file(results, out_file_name)
+        if cmd_flag_plot_results in cmds:
+            self.plot_points_to_ee(self, results)
+        return results
+
+    def cmd_analyze_velocity_norm(self, cmds):
+        """
+        Determine minimum joint velocities for a given end effector velocity norm
+        -f: filename of previously created manipulability file
+        -targetNorm: float target norm for EE velocity (linear or angular)
+        -angular: use angular calculations instead of linear
+        -plot: plot results
+        -o: output file name
+        """
+        return self._relate_joints_to_ee(cmds)
+
+    def cmd_analyze_force_norm(self, cmds):
+        """
+        Determine minimum joint torques for a given end effector force norm
+        -f: filename of previously created manipulability file
+        -targetNorm: float target norm for EE Torques (linear or angular)
+        -angular: use angular calculations instead of linear
+        -plot: plot results
+        -o: output file name
+        """
+        return self._relate_joints_to_ee(cmds)
+
+    def cmd_analyze_wrench_torques(self, cmds):
+        """
+        Given a mass, gravity (or force vector) and mass origin,
+        calculate the joint torques of a robot at each point in manipulability
+        -f: filename of previously created manipulability file
+        -targetNorm: float target norm for EE Torques (linear or angular)
+        -grav: gravity vector of the three-form [0,0,-9.81]
+        -massCG: mass cg transform of the TAA form [0,1,2,np.pi/4,np.pi/7,np.pi/8]
+        -mass: mass amount to apply (Kg) or N if using a force vector instead of gravity
+        -plot: plot results
+        -o: output file name
+        """
+        data = None
+        mass = 10
+        origin = tm()
+        grav_vector = np.array([0, 0, -9.81])
+        if cmd_flag_input_file in cmds:
+            object_file_name = post_flag(cmd_flag_input_file, cmds)
+        if cmd_flag_jac_grav in cmds:
+            pose_str = post_flag(cmd_flag_jac_grav, cmds)
+            grav_vector = np.array([float(item) for item in pose_str[1:-1].split(',')])
+        if cmd_flag_jac_origin in cmds:
+            pose_str = post_flag(cmd_flag_jac_origin, cmds)
+            origin = tm([float(item) for item in pose_str[1:-1].split(',')])
+        if cmd_flag_jac_mass in cmds:
+            mass = float(post_flag(cmd_flag_jac_mass, cmds))
+        with open(object_file_name, 'rb') as fp:
+            data = pickle.load(fp)
+        results = self.analyzer.analyze_matching_joint_torques(data, origin, mass, grav_vector)
+        save_output, out_file_name = self.save_results_flag(cmds)
+        if save_output:
+            self.save_to_file(results, out_file_name)
+        if cmd_flag_plot_results in cmds:
+            self.plot_points_to_ee(self, results)
+        return results
 
     def cmd_start_sequence(self):
         """

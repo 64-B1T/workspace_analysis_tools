@@ -642,7 +642,6 @@ class WorkspaceAnalyzer:
                 torques = self.bot.robot.staticForceWithLinkMasses(joint_config, ee_wrench)
                 res_sub.append([joint_config, torques])
             results.append([c[0], res_sub])
-
         return results
 
     def analyze_task_space(self, desired_poses):
