@@ -275,7 +275,6 @@ class CommandExecutor:
             DrawRectangle(
                 tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
                 [grid_rez]*3, ax, c=col, a=TRANSPARENCY_CONSTANT)
-            #disp('Plotting')
         plt.show()
 
     def plot_reachability_space(self, pose_cloud):
@@ -308,7 +307,6 @@ class CommandExecutor:
             DrawRectangle(
                 tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
                 [grid_rez]*3, ax, c=col, a=TRANSPARENCY_CONSTANT)
-            #disp('Plotting')
         plt.show()
 
     def cmd_analyze_task_manipulability(self, cmds):

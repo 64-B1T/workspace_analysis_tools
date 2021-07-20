@@ -43,7 +43,29 @@ ALPHA_VALUE = 1.2
 #They are reproduced here at the top of the file as constants for visibility and convenience
 
 
-# Helper Functions Tha You Probably Shouldn't Need To Call Directly
+# Helper Functions That You Probably Shouldn't Need To Call Directly
+def ignore_close_points(seen_points, empty_results, test_point, minimum_dist):
+    """
+    Ignores a point too close to other close points
+
+    Args:
+        seen_points: List of already accepted points
+        empty_results: Empty results list representing rejected points
+        test_point: Point to check
+        minimum_dist: Minimum allowable distance between points
+
+    Returns:
+        type: boolean signalling whether or not to ignore, and a list of ingored point/results
+
+    """
+    continuance = False
+    for point in seen_points:
+        if fsr.distance(point, test_point) < minimum_dist:
+            empty_results.append(process_empty(test_point))
+            continuance = True
+            break
+    return continuance, empty_results
+
 def gen_manip_sphere(manip_resolution):
     """
     Craft a manipulability sphere for use in testing manipulability resolution
@@ -51,7 +73,7 @@ def gen_manip_sphere(manip_resolution):
         manip_resolution: approximate number of points in sphere
     Returns:
         sphere: points in sphere
-        true_rez: thhe true number of points in the sphere
+        true_rez: the true number of points in the sphere
     """
     sphr, _ = fsr.unitSphere(manip_resolution)
     sphr.append([0, 0, 0])
@@ -597,9 +619,9 @@ class WorkspaceAnalyzer:
         Results:
             augmented results with joint vals added at each point
         """
-        inds = [3, 6]
+        inds = [3, 6] # Extracts the linear component of a wrench
         if angular:
-            inds = [0, 3]
+            inds = [0, 3] # Extracts the angular component of a wrench
         def minimize_ee_norm(joint_vals):
             ee_vals = self.bot.robot._jointsToEndEffectorJacobian(joint_vals).flatten()
             new_norm = np.linalg.norm(ee_vals[inds[0]:inds[1]])
@@ -879,10 +901,10 @@ class WorkspaceAnalyzer:
             num_spread, 0, num_dof)
 
     def analyze_6dof_manipulability(self,
-                                    shell_range=4,
-                                    num_shells=30,
-                                    points_per_shell=1000,
-                                    collision_detect=False):
+                                    shell_range=4, # Distance from origin in meters to extend shell
+                                    num_shells=30, # Number of shells to interpolate in shell range
+                                    points_per_shell=1000, # Approximate number of points per shell
+                                    collision_detect=False): # Utilize collision detection
         """
         Analyze the extent of a work_space that can be reached in a full gamut of 6DOF orientations
         Idealized Proceedure:
@@ -969,8 +991,6 @@ class WorkspaceAnalyzer:
         stl_mesh.vertices = stl_mesh.vertices * object_scale
         stl_mesh.apply_transform(object_pose.gTM())
 
-        #stl_mesh = mesh.Mesh.from_file(object_file_name)
-
         raw_points = []
         for i in range(len(stl_mesh.vertices)):
             raw_points.append(stl_mesh.vertices[i, :])
@@ -1000,16 +1020,12 @@ class WorkspaceAnalyzer:
             collision_manager.bind(ColliderArm(self.bot, 'model'))
             obstacle_manager = ColliderObstacles('object_surface')
             obstacle_manager.addMesh('object', stl_mesh)
-            #collision_manager.bind(ColliderObstacles())
             collision_manager.bind(obstacle_manager)
             if exempt_ee:
                 collision_manager.collision_objects[0].deleteEE()
 
 
         #Step One: Filter Out All points Beyond Maximum Reach of the Arm
-
-        #Step Two: Calculate Manipulability on All points within Maximum reach of the Arm
-
         empty_results = []
         true_points = []
         start = time.time()
@@ -1031,23 +1047,19 @@ class WorkspaceAnalyzer:
                 continue
             #Ignore points which are too close together
             if minimum_dist > 0:
-                continuance = False
-                for point in seen_points:
-                    if fsr.distance(point, p) < minimum_dist:
-                        empty_results.append(process_empty(p))
-                        continuance = True
-                        break
+                continuance, empty_results = ignore_close_points(
+                        seen_points, empty_results, p, minimum_dist)
                 if continuance:
                     continue
             true_points.append(p)
             if minimum_dist > 0:
                 seen_points.append(p)
+
+        #Step Two: Calculate Manipulability on All points within Maximum reach of the Arm
         if parallel:
             results = self.parallel_process_point_cloud(len(true_points), true_points,
                     sphere, true_rez, use_jacobian,
                     collision_detect, stl_mesh, exempt_ee)
-
-
         else:
             for i in range(len(true_points)):
                 p = true_points[i]
