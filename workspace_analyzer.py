@@ -1,18 +1,23 @@
-import math
-import sys
-import numpy as np
-import time
+# Utility Imports
 from datetime import datetime
+import itertools
+import math
+import multiprocessing as mp
+import numpy as np
+import os
+import scipy as sci
+import sys
+import time
+
+#This module imports
 from alpha_shape import AlphaShape
 from workspace_helper_functions import WaitText
-from stl import mesh
-import scipy as sci
-# from faser_plotting.Draw.Draw import *
-import multiprocessing as mp
-import itertools
+
+# Other module imports
 sys.path.append('../')
-from faser_utils.disp.disp import disp, progressBar
+from robot_collisions import createMesh, ColliderManager, ColliderArm, ColliderObstacles
 from faser_math import tm, fsr
+from faser_utils.disp.disp import disp, progressBar
 
 
 #Constant Values
@@ -38,7 +43,44 @@ ALPHA_VALUE = 1.2
 #They are reproduced here at the top of the file as constants for visibility and convenience
 
 
-# Helper Functions Tha You Probably Shouldn't Need To Call Directly
+# Helper Functions That You Probably Shouldn't Need To Call Directly
+def ignore_close_points(seen_points, empty_results, test_point, minimum_dist):
+    """
+    Ignores a point too close to other close points
+
+    Args:
+        seen_points: List of already accepted points
+        empty_results: Empty results list representing rejected points
+        test_point: Point to check
+        minimum_dist: Minimum allowable distance between points
+
+    Returns:
+        type: boolean signalling whether or not to ignore, and a list of ingored point/results
+
+    """
+    continuance = False
+    for point in seen_points:
+        if fsr.distance(point, test_point) < minimum_dist:
+            empty_results.append(process_empty(test_point))
+            continuance = True
+            break
+    return continuance, empty_results
+
+def gen_manip_sphere(manip_resolution):
+    """
+    Craft a manipulability sphere for use in testing manipulability resolution
+    Args:
+        manip_resolution: approximate number of points in sphere
+    Returns:
+        sphere: points in sphere
+        true_rez: the true number of points in the sphere
+    """
+    sphr, _ = fsr.unitSphere(manip_resolution)
+    sphr.append([0, 0, 0])
+    sphere = np.array(sphr) * np.pi
+    true_rez = len(sphere)
+    return sphere, true_rez
+
 def grid_cloud_within_volume(shape, resolution=.25):
     """
     Fill an alpha shape with a grid of points according to the resolution parameter.
@@ -76,7 +118,6 @@ def grid_cloud_within_volume(shape, resolution=.25):
     pruned_cloud = inside_alpha_shape(shape, cloud)
     print('Pruned Cloud Size:' + str(len(pruned_cloud)))
     return pruned_cloud
-
 
 def moller_trumbore_ray_intersection(origin_point,
                                      triangle,
@@ -170,8 +211,8 @@ def moller_trumbore_ray_intersection_array(points,
 
     return res
 
-def chunk_moller_trumbore(test_points, triangles, epsilon_vector,
-                          result_array):
+
+def chunk_moller_trumbore(test_points, triangles, epsilon_vector, result_array):
     """
     Perform a chunk of moller_trumbore, useful for parallel processing.
 
@@ -190,6 +231,7 @@ def chunk_moller_trumbore(test_points, triangles, epsilon_vector,
         # where res == True
         result_array[np.where(res)] += 1
     return result_array
+
 
 def inside_alpha_shape(shape, points, check_bounds=True):
     """
@@ -265,6 +307,7 @@ def inside_alpha_shape(shape, points, check_bounds=True):
     inside = points[np.where(isodd(num_intersections))]
     return inside
 
+
 def alpha_intersection(shape_1, shape_2):
     """
     Return a cut down version of shape_1, including only what is in shape_2
@@ -279,6 +322,7 @@ def alpha_intersection(shape_1, shape_2):
     new_points = np.concatenate(inside_shape_1, inside_shape_2)
     new_shape = AlphaShape(new_points, ALPHA_VALUE)
     return new_shape
+
 
 def optimize_robot_for_goals(build_robot, goals_list, init=None):
     """
@@ -317,6 +361,7 @@ def optimize_robot_for_goals(build_robot, goals_list, init=None):
     disp(res)
     return res
 
+
 def maximize_manipulability_at_point(bot, pos):
     """
     Attemps to find the rotational configuration at a point that yields
@@ -343,14 +388,14 @@ def maximize_manipulability_at_point(bot, pos):
     max_manip_pos = tm([pos[0], pos[1], pos[2], sol[0], sol[1], sol[2]])
     theta, suc = bot.IK(max_manip_pos)
     if not suc:
-        return 0, tm()
+        return 0, tm(), theta
     score = sum(calculate_manipulability_score(bot, theta)) / 2
-    return score, max_manip_pos
+    return score, max_manip_pos, theta
 
 
 def calculate_manipulability_score(bot, theta):
     """
-    Calculates the manipulability ellipsoid at a given pose
+    Calculate the manipulability ellipsoid at a given pose.
 
     Returns a 'score' of the total manipulability
     Args:
@@ -375,26 +420,41 @@ def calculate_manipulability_score(bot, theta):
     return manipulability_ratio_v, manipulability_ratio_w
 
 
-def process_empty(p, store_joint_locations=False):
+def process_empty(p):
     """
-    Helper function for multiprocessing. Literally returns empty
+    Helper function for multiprocessing. Literally returns empty.
     Args:
         p: Point
-        store_joint_locations: [Optional Boolean]
     Returns:
         [p, 0, []]
     """
-    if store_joint_locations:
-        return [p, 0, [], []]
-    return [p, 0, []]
+    return [p, 0, [], [], []]
 
+
+def get_collision_data(collision_manager):
+    """
+    Helper function for determining if a collision is ocurring
+    Args:
+        collision_manager: ColliderManager object populated with an arm and optional obstacle
+    Returns:
+        boolean for collision
+    """
+    collision_manager.update()
+    inter_collisions = False
+    if len(collision_manager.collision_objects) > 1:
+        inter_collisions = collision_manager.checkCollisions()[0]
+    solo_collisions = collision_manager.collision_objects[0].checkInternalCollisions()
+    if inter_collisions or solo_collisions:
+        return True
+    return False
 
 def process_point(p,
                   sphere,
                   true_rez,
                   bot,
-                  store_joint_locations=False,
-                  use_jacobian=False):
+                  use_jacobian=False,
+                  collision_detect=False,
+                  collision_manager=None):
     """
     Process a point against a unit sphere for success metric.
 
@@ -403,34 +463,80 @@ def process_point(p,
         sphere: unit sphere
         true_rez: the true amount of points inside the unit sphere
         bot: reference to the robot object
-        store_joint_locations: [Optional Boolean] whether or not to store joint lcoations
-        use_jacobian
+        use_jacobian: [Optional Bool] Use Jacobian instead of unit sphere
+        collision_detect: [Optional Bool] detect collisions (Default False)
+        collision_manager: [Optional ColliderManager] provide if setting collision Detect on
     Returns:
-        Results: [point, success_percentage, successful_orientations]
+        Results: [point, success_percentage, successful_orientations, successful_thetas]
     """
     successes = []
+    thetas = []
     success_count = 0
-    if not store_joint_locations and use_jacobian:
-        score, max_pos = maximize_manipulability_at_point(bot, p)
+    if use_jacobian:
+        score, max_pos, theta = maximize_manipulability_at_point(bot, p)
+        if collision_detect and get_collision_data(collision_manager):
+            score = 0
         if score == 0:
-            return [p, 0, []]
-        return [p, score, [max_pos]]
-    elif store_joint_locations:
-        jlocs = []
+            return [p, 0, [], []]
+        return [p, score, [max_pos], [theta]]
     for j in range(true_rez):
         rot = sphere[j, :]
         goal = tm([p[0], p[1], p[2], rot[0], rot[1], rot[2]])
-        _, suc = bot.IK(goal)
+        theta, suc = bot.IK(goal)
+        if collision_detect and get_collision_data(collision_manager):
+            suc = False
         if suc:
+            thetas.append(theta)
             successes.append(rot)
-            if store_joint_locations:
-                jlocs.append(bot.getJointTransforms())
             success_count += 1
-        elif store_joint_locations:
-            jlocs.append(0)
-    if store_joint_locations:
-        return [p, success_count / true_rez, successes, jlocs]
-    return [p, success_count / true_rez, successes]
+    return [p, success_count / true_rez, successes, thetas]
+
+def chunk_point_processing(points, sphere, true_rez, bot,
+        use_jacobian, collision_detect, stl_mesh = None,
+        exempt_ee = False, display_eta = False):
+    """
+    Process points in a chunk (for parallel computation)
+
+    Args:
+        points: list of points to process
+        sphere: unit sphere to use
+        true_rez: true resolution of the unit sphere
+        bot: reference to robot object
+        use_jacobian: bool to use a jacobian
+        collision_detect: bool to detect collisions
+        stl_mesh: optional stl mesh object to use for collision checking
+        exempt_ee: optional exemption of end effector from collision checking
+        display_eta: optional boolean to display a progress bar
+
+    Returns:
+        list: results (as of process point)
+
+    """
+
+    collision_manager = None
+    if collision_detect:
+        collision_manager = ColliderManager()
+        collision_manager.bind(ColliderArm(bot, 'model'))
+        if stl_mesh is not None:
+            obstacle = ColliderObstacles('object_surface')
+            obstacle.addMesh('object', stl_mesh)
+            collision_manager.bind(obstacle)
+        if exempt_ee:
+            collision_manager.collision_objects[0].deleteEE()
+            collision_manager.collision_objects[0].deleteEE()
+    results = []
+    last_iter = len(points)
+    start = time.time()
+    for i in range(last_iter):
+        results.append(process_point(points[i], sphere,
+                true_rez, bot, use_jacobian,
+                collision_detect, collision_manager))
+        if display_eta:
+            progressBar(i,
+                    last_iter - 1,
+                    prefix='Chunked Point Processing',
+                    ETA=start)
+    return results
 
 
 class WorkspaceAnalyzer:
@@ -440,13 +546,125 @@ class WorkspaceAnalyzer:
 
     def __init__(self, linkedRobot):
         self.bot = linkedRobot
-        self.num_procs = 12
+        cpu_count = os.cpu_count()
+        self.num_procs = 4
+        if cpu_count is not None:
+            self.num_procs = cpu_count - 1 # Leave a CPU for doing other things
         if not self.bot.is_ready():
             print('Please Check Bindings')
         self.unique_decimals = UNIQUE_DECIMALS
         self.dof_offset = DOF_OFFSET
         self.alpha_value = ALPHA_VALUE
         self.max_dist = MAX_DIST
+
+    def parallel_process_point_cloud(self, num_poses, desired_poses, sphere, true_rez,
+            use_jacobian=False, collision_detect=False, stl_mesh=None, exempt_ee=False):
+        """
+        Run a point cloud through parallel processing, potentially with collision checking
+
+        Args:
+            num_poses: number of points to calculate
+            desired_poses: points to calculate
+            sphere: unit sphere to use
+            true_rez: true resolution of the unit sphere
+            use_jacobian: bool to use a jacobian
+            collision_detect: bool to detect collisions
+            stl_mesh: optional stl mesh object to use for collision checking
+            exempt_ee: optional exemption of end effector from collision checking
+
+        Returns:
+            Results: [[point, success_percentage, successful_orientations, successful_thetas],[]]
+        """
+        async_results = []
+        results = []
+        start = time.time()
+        chunk_sz = num_poses // self.num_procs
+        with mp.Pool(self.num_procs) as pool:
+            for i in range(self.num_procs):
+                progressBar(i,
+                        self.num_procs - 1,
+                        prefix='Spawning Async Tasks        ',
+                        ETA=start)
+                display_eta = i == (self.num_procs - 1)
+                small_ind = i * chunk_sz
+                large_ind = (i + 1) * chunk_sz
+                if display_eta:
+                    large_ind = num_poses
+                async_results.append(pool.apply_async(chunk_point_processing, (
+                        desired_poses[small_ind:large_ind], sphere, true_rez, self.bot.robot,
+                        use_jacobian, collision_detect, stl_mesh, exempt_ee, display_eta)))
+            waiter = WaitText('Running Point Detection    ')
+            while not async_results[-1].ready():
+                waiter.print()
+                time.sleep(.5)
+            waiter.done()
+            start_2 = time.time()
+            for i in range(self.num_procs):
+                progressBar(i,
+                        self.num_procs - 1,
+                        prefix='Collecting Async Results',
+                        ETA=start_2)
+                results.extend(async_results[i].get(timeout=5*true_rez))
+        return results
+
+    def analyze_joint_related_to_end_effector_vals(self, manipulability_space, joint_goal_norm, angular = False):
+        """
+        Calculates the minimum joint values to relate to desired end effector norm
+        Works for velocities and torques
+
+        Args:
+            manipulability_space: results from a manipulability analysis
+            joint_goal_norm: goal joint norm
+
+        Results:
+            augmented results with joint vals added at each point
+        """
+        inds = [3, 6] # Extracts the linear component of a wrench
+        if angular:
+            inds = [0, 3] # Extracts the angular component of a wrench
+        def minimize_ee_norm(joint_vals):
+            ee_vals = self.bot.robot._jointsToEndEffectorJacobian(joint_vals).flatten()
+            new_norm = np.linalg.norm(ee_vals[inds[0]:inds[1]])
+            if new_norm > joint_goal_norm:
+                return new_norm - joint_goal_norm
+            else:
+                return joint_goal_norm + new_norm
+        results = []
+        xs = sci.optimize.fmin(minimize_ee_norm, manipulability_space[0][3][0], disp = False)
+        for c in manipulability_space:
+            res_sub = []
+            for joint_config in c[3]:
+                self.bot.FK(joint_config)
+                xs = sci.optimize.fmin(minimize_ee_norm, xs, disp = False)
+                res_sub.append([joint_config, xs])
+            results.append([c[0], res_sub])
+        return results
+
+    def analyze_matching_joint_torques(self, manipulability_space,
+            mass_cg, mass, grav_vector = np.array([0, 0, -9.8])):
+        """
+        Calculate joint torques for a given end effector wrench
+
+        Args:
+            manipulability_space: results list from earlier manipulability analysis
+            mass_cg: center of gravity tm for the applied mass relative to EE (global)
+            mass: mass in kilograms of payload
+            grav_vector: applied gravity. Normally this would be [0, 0, -9.8] default
+
+        Returns:
+            list: list corresponding joint torques and thetas to points in manipulability space
+
+        """
+        results = []
+        for c in manipulability_space:
+            res_sub = []
+            for joint_config in c[3]:
+                self.bot.FK(joint_config)
+                ee_wrench = fsr.makeWrench(self.bot.getEE() @ mass_cg, mass, grav_vector)
+                torques = self.bot.robot.staticForceWithLinkMasses(joint_config, ee_wrench)
+                res_sub.append([joint_config, torques])
+            results.append([c[0], res_sub])
+        return results
 
     def analyze_task_space(self, desired_poses):
         """
@@ -480,7 +698,7 @@ class WorkspaceAnalyzer:
         return num_successful, successful_poses
 
     def analyze_task_space_manipulability(self, desired_poses,
-            manip_resolution=25, parallel=False, use_jacobian=False):
+            manip_resolution=25, parallel=False, use_jacobian=False, collision_detect=False):
         """
         Given a cloud of points, determine manipulability at each point
         Args:
@@ -488,48 +706,35 @@ class WorkspaceAnalyzer:
             manip_resolution: approximate number of points on surface of unit sphere to try
             parallel: whether or not to use parallel computation
             use_jacobian: whether or not to use jacobian computation instead of unit sphere
+            collision_detect: [Optional Bool] detect collisions (Default False)
         Returns:
             Results: [[Point, success_percentage, successful_orientations],[...],...]
         """
 
         num_poses = len(desired_poses)
         last_iter = num_poses - 1
-
         results = []
 
-        sphr, _ = fsr.unitSphere(manip_resolution)
-        sphr.append([0, 0, 0])
-        sphere = np.array(sphr) * np.pi
-        true_rez = len(sphere)
+        sphere, true_rez = gen_manip_sphere(manip_resolution)
+
+        collision_manager = None
 
         start = time.time()
         if parallel and num_poses > 8 * self.num_procs:  # Is it *really* worth parallelism?
-            async_results = []
-            with mp.Pool(self.num_procs) as pool:
-                for i in range(num_poses):
-                    progressBar(i,
-                            last_iter,
-                            prefix='Spawning Async Tasks    ',
-                            ETA=start)
-                    async_results.append(pool.apply_async(process_point, (
-                            desired_poses[i], sphere, true_rez, self.bot.robot,
-                            False, use_jacobian)))
-                start_2 = time.time()
-                for i in range(num_poses):
-                    progressBar(i,
-                            last_iter,
-                            prefix='Collecting Async Results',
-                            ETA=start_2)
-                    results.append(async_results[i].get(timeout=2*true_rez))
+            results = self.parallel_process_point_cloud(num_poses, desired_poses, sphere, true_rez,
+                    use_jacobian=use_jacobian, collision_detect=False)
         else:
-
+            if collision_detect:
+                collision_manager = ColliderManager()
+                collision_manager.bind(ColliderArm(self.bot, 'model'))
             for i in range(num_poses):
                 progressBar(i,
                             last_iter,
                             prefix='Analyzing Cloud',
                             ETA=start)
                 results.append(process_point(
-                        desired_poses[i], sphere, true_rez, self.bot, False, use_jacobian))
+                        desired_poses[i], sphere, true_rez, self.bot,
+                        use_jacobian, collision_detect, collision_manager))
         end = time.time()
         disp(end - start, 'Elapsed')
         return results
@@ -696,9 +901,10 @@ class WorkspaceAnalyzer:
             num_spread, 0, num_dof)
 
     def analyze_6dof_manipulability(self,
-                                    shell_range=4,
-                                    num_shells=30,
-                                    points_per_shell=1000):
+                                    shell_range=4, # Distance from origin in meters to extend shell
+                                    num_shells=30, # Number of shells to interpolate in shell range
+                                    points_per_shell=1000, # Approximate number of points per shell
+                                    collision_detect=False): # Utilize collision detection
         """
         Analyze the extent of a work_space that can be reached in a full gamut of 6DOF orientations
         Idealized Proceedure:
@@ -724,6 +930,7 @@ class WorkspaceAnalyzer:
             shell_range: maximum distance from origin of the farthest shell
             num_shells: number of shells
             points_per_shell: number of points in a shell
+            collision_detect: [Optional Bool] detect collisions (Default False)
         Returns:
             transformation list of successful 6DOF poses.
         """
@@ -731,39 +938,20 @@ class WorkspaceAnalyzer:
         shells = ([[[y * rad for y in x]
                     for x in fsr.unitSphere(points_per_shell)[0]]
                    for rad in shell_radii])
-        scores = []
+        results = []
         i = 0
+        collision_manager = None
+        if collision_detect:
+            collision_manager = ColliderManager()
+            collision_manager.bind(ColliderArm(self.bot, 'model'))
         for shell in shells:
             for point in shell:
                 progressBar(i, (num_shells + 2) * points_per_shell,
                             prefix='Analyzing Reachability')
                 i += 1
-
-                def manipulability_at_point(p, r):
-                    theta, suc = self.bot.IK(
-                        tm([p[0], p[1], p[2], r[0], r[1], r[2]]))
-                    if suc:
-                        man_v, man_w = calculate_manipulability_score(
-                            self.bot, theta)
-                        if man_v == 0 or man_w == 0:
-                            return -9999
-                        else:
-                            return 1 - (man_v + man_w) / 2
-                    else:
-                        return -999999
-
-                initial_rot = np.zeros((3))
-                _, succ = self.bot.IK(
-                    tm([point[0], point[1], point[2], 0, 0, 0]))
-
-                #botres = lambda x : manipulability_at_point(point, x)
-                #sol = sci.optimize.fmin(botres, initial_rot, disp=False)
-                sol = initial_rot
-                score = manipulability_at_point(point, sol)
-                if score < 0 or not succ:
-                    continue
-                scores.append([point, score])
-        return scores
+                results.append(process_point(point, None, None, self.bot,
+                        True, collision_detect, collision_manager))
+        return results
         #find a way to manipulate here for optimal reachability
 
     def analyze_manipulability_on_object_surface(self,
@@ -776,8 +964,7 @@ class WorkspaceAnalyzer:
                                                  parallel=False,
                                                  use_jacobian=False,
                                                  minimum_dist=-1.0,
-                                                 bound_shape=None,
-                                                 approximate_bounding=False):
+                                                 bound_shape=None):
         """
         Analyze Manipulability On The Surface of An Object
         Given a file handle describing a STL mesh,
@@ -800,30 +987,14 @@ class WorkspaceAnalyzer:
             mesh: the loaded STL mesh
         """
 
-        stl_mesh = mesh.Mesh.from_file(object_file_name)
-        start = time.time()
-        num_vertices_x = len(stl_mesh.x)
+        stl_mesh = createMesh(tm(), object_file_name)
+        stl_mesh.vertices = stl_mesh.vertices * object_scale
+        stl_mesh.apply_transform(object_pose.gTM())
 
-        for i in range(num_vertices_x):
-            #TODO(LIAM) this can probably be optimized through numpy
-            progressBar(i,
-                        num_vertices_x - 1,
-                        prefix='Preparing Mesh              ',
-                        ETA=start)
-            for j in range(3):
-                mesh_pos_temp = tm([
-                    stl_mesh.x[i, j] * object_scale,
-                    stl_mesh.y[i, j] * object_scale,
-                    stl_mesh.z[i, j] * object_scale, 0, 0, 0
-                ])
-                t_new = (object_pose @ mesh_pos_temp).TAA.flatten()
-                stl_mesh.x[i, j] = t_new[0]
-                stl_mesh.y[i, j] = t_new[1]
-                stl_mesh.z[i, j] = t_new[2]
-
-        points = np.unique(stl_mesh.vectors.reshape(
-            [int(stl_mesh.vectors.size / 3), 3]),
-                           axis=0)
+        raw_points = []
+        for i in range(len(stl_mesh.vertices)):
+            raw_points.append(stl_mesh.vertices[i, :])
+        points = np.unique(np.array(raw_points), axis=0)
 
         if bound_shape is not None:
             #Filter out everything we know the robot can't reach anyway
@@ -831,17 +1002,10 @@ class WorkspaceAnalyzer:
             if len(filtered_points) == 0:
                 return [], stl_mesh
 
-        sphr, _ = fsr.unitSphere(manip_resolution)
         num_points = len(points)
-        sphr.append([0, 0, 0])
-        sphere = np.array(sphr) * np.pi
-        true_rez = len(sphere)
+        sphere, true_rez = gen_manip_sphere(manip_resolution)
         results = []
-        nd = len(self.bot.getJointTransforms())
         bot_base = self.bot.getJointTransforms()[0]
-
-        joint_locs_arr_len = num_points * true_rez * nd
-        verification_array = np.zeros((joint_locs_arr_len, 3))
 
         if num_points < 2 * self.num_procs:
             parallel = False  # Verify there's really a need for parallelism
@@ -851,220 +1015,62 @@ class WorkspaceAnalyzer:
         if minimum_dist > 0:
             seen_points = []
 
+        if collision_detect:
+            collision_manager = ColliderManager()
+            collision_manager.bind(ColliderArm(self.bot, 'model'))
+            obstacle_manager = ColliderObstacles('object_surface')
+            obstacle_manager.addMesh('object', stl_mesh)
+            collision_manager.bind(obstacle_manager)
+            if exempt_ee:
+                collision_manager.collision_objects[0].deleteEE()
+
+
         #Step One: Filter Out All points Beyond Maximum Reach of the Arm
+        empty_results = []
+        true_points = []
+        start = time.time()
+        for i in range(num_points):
+            progressBar(i,
+                        num_points - 1,
+                        prefix='Preprocessing Data          ',
+                        ETA=start)
+            p = points[i, :]
+            #Ignore points we've already filtered out
+            if bound_shape is not None:
+                if p not in filtered_points:
+                    empty_results.append(process_empty(p))
+                    continue
+            #Ignore points which are too far away
+            if fsr.distance(p, bot_base) > self.max_dist:
+                #TODO(Liam) determine max reach from AShape
+                empty_results.append(process_empty(p))
+                continue
+            #Ignore points which are too close together
+            if minimum_dist > 0:
+                continuance, empty_results = ignore_close_points(
+                        seen_points, empty_results, p, minimum_dist)
+                if continuance:
+                    continue
+            true_points.append(p)
+            if minimum_dist > 0:
+                seen_points.append(p)
 
         #Step Two: Calculate Manipulability on All points within Maximum reach of the Arm
         if parallel:
-            with mp.Pool(self.num_procs) as pool:
-                async_results = []
-                start = time.time()
-                for i in range(num_points):
-                    progressBar(i,
-                                num_points - 1,
-                                prefix='Spawning Async Tasks        ',
-                                ETA=start)
-                    p = points[i, :]
-                    #Ignore points we've already filtered out
-                    if bound_shape is not None:
-                        if p not in filtered_points:
-                            async_results.append(
-                                pool.apply_async(process_empty, (p, True)))
-                            continue
-                    #Ignore points which are too far away
-                    if fsr.distance(p, bot_base) > self.max_dist:
-                        #TODO(Liam) determine max reach from AShape
-                        async_results.append(
-                            pool.apply_async(process_empty, (p, True)))
-                        continue
-                    #Ignore points which are too close together
-                    if minimum_dist > 0:
-                        continuance = False
-                        for point in seen_points:
-                            if fsr.distance(point, p) < minimum_dist:
-                                async_results.append(
-                                    pool.apply_async(process_empty, (p, True)))
-                                continuance = True
-                                break
-                        if continuance:
-                            continue
-
-                    async_results.append(
-                        pool.apply_async(process_point,
-                                         (p, sphere, true_rez, self.bot.robot,
-                                          True, use_jacobian)))
-                    if minimum_dist > 0:
-                        seen_points.append(p)
-                start = time.time()
-                #print(num_points, len(async_results))
-                for i in range(num_points):
-                    progressBar(i,
-                                num_points - 1,
-                                prefix='Computing Reachability      ',
-                                ETA=start)
-                    results.append(async_results[i].get(timeout=2 * true_rez))
-                start = time.time()
-                for i in range(num_points):
-                    progressBar(i,
-                                num_points - 1,
-                                prefix='Post Processing             ',
-                                ETA=start)
-                    if results[i][3] == []:
-                        continue
-                    for j in range(true_rez):
-                        if results[i][3][j] == 0:
-                            continue
-                        for k in range(nd):
-
-                            r = results[i]
-                            ri = r[3]
-                            rj = ri[j]
-                            rk = rj[k]
-                            sample_ind = (i * true_rez * nd) + (j * nd) + k
-                            verification_array[sample_ind, :] = rk[0:3].flatten()
+            results = self.parallel_process_point_cloud(len(true_points), true_points,
+                    sphere, true_rez, use_jacobian,
+                    collision_detect, stl_mesh, exempt_ee)
         else:
-            for i in range(num_points):
+            for i in range(len(true_points)):
+                p = true_points[i]
                 progressBar(i,
                             num_points - 1,
                             prefix='Computing Reachability      ',
                             ETA=start)
-                p = points[i, :]
-                #Ignore points we've already filtered out
-                if bound_shape is not None:
-                    if p not in filtered_points:
-                        results.append(process_empty(p, True))
-                        continue
-                #Ignore points which are too far away
-                if fsr.distance(p, bot_base) > self.max_dist:
-                    results.append(process_empty(p, True))
-                    continue
-                #Ignore ponts which are too close together
-                if minimum_dist > 0:
-                    continuance = False
-                    for point in seen_points:
-                        if fsr.distance(point, p) < minimum_dist:
-                            results.append(process_empty(p, True))
-                            continuance = True
-                            break
-                    if continuance:
-                        continue
-                pdone = process_point(p, sphere, true_rez, self.bot, True,
-                                      use_jacobian)
-                if minimum_dist > 0:
-                    seen_points.append(p)
-                if pdone[3] == []:
-                    continue
-                for j in range(true_rez):
-                    if pdone[3][j] == 0:
-                        continue
-                    for k in range(nd):
-                        sample_index = (i * true_rez * nd) + (j * nd) + k
-                        temp_val = pdone[3][j][k][0:3].flatten()
-                        verification_array[sample_index, :] = temp_val
+                pdone = process_point(p, sphere, true_rez, self.bot, use_jacobian,
+                        collision_detect, collision_manager)
                 results.append(pdone)
-
-        if not collision_detect:
-            return results, stl_mesh
-
-        #Step Three: Locate Instances Where the Arm Collides WIth The Object In Question
-        tri_vecs = None
-
-        if approximate_bounding:
-            if bound_shape is not None:
-                tri_vecs = np.array(AlphaShape(filtered_points, self.alpha_value).triangles)
-            else:
-                tri_vecs = np.array(AlphaShape(points, self.alpha_value).triangles)
-        else:
-            tri_vecs = stl_mesh.vectors
-        vec_len = len(tri_vecs)
-
-        def isodd(x):
-            return x % 2 != 0
-
-        num_intersections = np.zeros(joint_locs_arr_len)
-        if parallel:
-            with mp.Pool(self.num_procs) as pool:
-                # Integer division to determine chunk size to feed to parallel computation
-                # Excess is absorbed by the last chunk
-                chunk_sz = vec_len // self.num_procs
-                async_startup = []
-                for i in range(self.num_procs):
-                    progressBar(i, self.num_procs - 1,
-                                'Initializing Moller Trumbore')
-                    if i == self.num_procs - 1:
-                        async_startup.append(
-                            pool.apply_async(chunk_moller_trumbore,
-                                             (verification_array,
-                                              tri_vecs[i * chunk_sz:, :],
-                                              np.array([EPSILON, 0, RAY_UNIT - EPSILON]),
-                                              np.zeros(joint_locs_arr_len))))
-                    else:
-
-                        async_startup.append(
-                            pool.apply_async(
-                                chunk_moller_trumbore,
-                                (verification_array,
-                                 tri_vecs[i * chunk_sz:(i + 1) *
-                                                  chunk_sz, :],
-                                 np.array([EPSILON, 0, RAY_UNIT - EPSILON
-                                           ]), np.zeros(joint_locs_arr_len))))
-
-                waiter = WaitText('Running Moller Trumbore')
-                while not async_startup[0].ready():
-                    waiter.print()
-                    time.sleep(.25)
-                waiter.done()
-                moller_results = []
-                start = time.time()
-                for i in range(self.num_procs):
-                    progressBar(i,
-                                self.num_procs - 1,
-                                'Retrieving Results          ',
-                                ETA=start)
-                    moller_results.append(async_startup[i].get(timeout=100))
-                print('Combining Results...')
-                for i in range(self.num_procs):
-                    #print(np.shape(moller_results[i]))
-                    num_intersections += moller_results[i]
-        else:
-            start = time.time()
-            for i in range(vec_len):
-                progressBar(i,
-                            vec_len - 1,
-                            prefix='Executing Moller Trumbore   ',
-                            ETA=start)
-                res = moller_trumbore_ray_intersection_array(
-                    verification_array, tri_vecs[i, :],
-                    np.array([EPSILON, 0, RAY_UNIT - EPSILON]))
-
-                # where(res == True)
-                num_intersections[np.where(res)] += 1
-
-        # Step Four: Discard Instances Where The Arm Collides With The Object In Question
-        lva = len(verification_array)
-        start = time.time()
-        penalized_configs = []
-        for i in range(lva):
-            progressBar(i,
-                        lva - 1,
-                        prefix='Filtering out Collisions    ',
-                        ETA=start)
-            if isodd(num_intersections[i]):
-                #sample_index = (i*true_rez*nd)+(j*nd)+k For reference
-                top_ind = i // (true_rez * nd)  # Top Level Bucket
-                snd_ind = i // (nd)  # Second Level Bucket
-                if exempt_ee and snd_ind == nd - 1:
-                    #TODO(Liam) is this correct?
-                    continue
-
-                config_duo = (top_ind, snd_ind)
-                if config_duo in penalized_configs:
-                    continue
-                penalized_configs.append(config_duo)
-                if sum(abs(results[top_ind][0])) < .001:
-                    #Is near zero
-                    continue
-
-                results[top_ind][1] -= (1 / true_rez)
+        results.extend(empty_results)
         return results, stl_mesh
 
     def analyze_manipulability_within_volume(self,
@@ -1072,7 +1078,8 @@ class WorkspaceAnalyzer:
                                              grid_resolution=.25,
                                              manip_resolution=25,
                                              parallel=False,
-                                             use_jacobian=False):
+                                             use_jacobian=False,
+                                             collision_detect=False):
         """
         Given a volume encapsulating a work_space, analyze the 6DOF positioning capability within
         That particular work_space.
@@ -1083,7 +1090,8 @@ class WorkspaceAnalyzer:
             manip_resolution: the target number of points to create on a unit sphere
                 to measure rotational capability at a given point
             parallel: analyze in parallel
-            use_jacobian: use jacobian manipulability optimization instead
+            use_jacobian: use jacobian manipulability optimization instead'
+            collision_detect: [Optional Bool] detect collisions (Default False)
         Returns:
             scorelist: a list containing points, scores, and successful positions:
                 each element takes the form: [p, s, posl]
@@ -1095,14 +1103,15 @@ class WorkspaceAnalyzer:
         point_cloud = grid_cloud_within_volume(shape, grid_resolution)
 
         return self.analyze_task_space_manipulability(point_cloud,
-                manip_resolution, parallel, use_jacobian)
+                manip_resolution, parallel, use_jacobian, collision_detect)
 
     def analyze_manipulability_over_trajectory(self,
                                                point_list,
                                                manipulability_mode=1,
                                                manip_resolution=25,
                                                point_interpolation_dist=-1,
-                                               point_interpolation_mode=1):
+                                               point_interpolation_mode=1,
+                                               collision_detect=False):
         """
         Given a list of points to test, analyze the manipulability over the trajectory
         Args:
@@ -1118,6 +1127,7 @@ class WorkspaceAnalyzer:
             point_interpolation_dist: [Optional Int] sets the method of interpolation
                 1- Use Linear (Gap Closure) interpolation
                 2- Use Arc (Arc Gap) interpolation
+            collision_detect: [Optional Bool] detect collisions (Default False)
         Returns:
             results_list: [(point, score)] results list, one entry per point in trajectory
         """
@@ -1153,6 +1163,6 @@ class WorkspaceAnalyzer:
 
         #Step Two: Determine Manipulability Function
         results = self.analyze_task_space_manipulability(point_list,
-                manip_resolution, False, manipulability_mode == 1)
+                manip_resolution, False, manipulability_mode == 1, collision_detect)
 
         return results
