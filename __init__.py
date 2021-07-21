@@ -5,4 +5,4 @@ from alpha_shape import AlphaShape
 from robot_link import RobotLink
 from workspace_analyzer import WorkspaceAnalyzer, optimize_robot_for_goals
 from workspace_viewer import WorkspaceViewer, view_workspace
-from workspace_command_line import WorkspaceCommandLine
+from workspace_command_line import WorkspaceCommandLine, CommandExecutor
