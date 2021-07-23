@@ -12,7 +12,7 @@ import sys
 from faser_math import tm
 from faser_plotting.Draw.Draw import DrawRectangle, DrawAxes, drawMesh
 from faser_robot_kinematics import loadArmFromURDF
-from faser_utils.disp.disp import disp
+from faser_utils.disp.disp import disp, progressBar
 
 #This Module Imports
 from robot_link import RobotLink
@@ -47,6 +47,7 @@ cmd_str_analyze_manipulability_object_surface = 'objectSurfaceManipulability'
 cmd_str_manipulability_within_volume = 'manipulabilityWithinVolume'
 cmd_str_manipulability_over_trajectory = 'manipulabilityOverTrajectory'
 cmd_str_view_manipulability_space = 'viewManipulabilitySpace'
+cmd_str_brute_manipulability = 'analyzeBruteManipulability'
 cmd_str_analyze_force_norm = 'analyzeForceNorm'
 cmd_str_analyze_velocity_norm = 'analyzeVelocityNorm'
 cmd_str_analyze_wrench_torques = 'analyzeWrenchTorques'
@@ -66,6 +67,7 @@ valid_commands = [
     cmd_str_analyze_total_workspace_alpha,
     cmd_str_analyze_unit_shell_manipulability,
     cmd_str_analyze_manipulability_object_surface,
+    cmd_str_brute_manipulability,
     cmd_str_manipulability_within_volume,
     cmd_str_manipulability_over_trajectory,
     cmd_str_view_manipulability_space,
@@ -119,13 +121,15 @@ cmd_flag_trajectory_arc_interp = '-arcInterpolation'
 cmd_flag_viewer_draw_alpha = '-alphaFile'
 cmd_flag_viewer_draw_slices = '-draw3DSlices'
 
-#Vels and TOrques Flags
+#Vels and Torques Flags
 cmd_flag_jac_norm = '-targetNorm'
 cmd_flag_jac_grav = '-grav'
 cmd_flag_jac_origin = '-massCG'
 cmd_flag_jac_mass = '-mass'
 cmd_flag_jac_angular = '-angular'
 
+#Brute Manipulability Joints Flags
+cmd_flag_brute_excluded = '-exclude'
 
 class CommandExecutor:
     """Superclass for workspace command line, to enable use in other applications more easily"""
@@ -315,6 +319,9 @@ class CommandExecutor:
         """
         plt.figure()
         ax = plt.axes(projection='3d')
+        ax.set_xlim3d(-4,4)
+        ax.set_ylim3d(-4,4)
+        ax.set_zlim3d(-4,4)
         for r in results:
             score = r[1]
             col = score_point(score)
@@ -734,11 +741,40 @@ class CommandExecutor:
             data = pickle.load(fp)
         results = self.analyzer.analyze_matching_joint_torques(data, origin, mass, grav_vector)
         save_output, out_file_name = self.save_results_flag(cmds)
+        if cmd_flag_plot_results in cmds:
+            self.plot_points_to_ee(results, 0.1)
         if save_output:
             self.save_to_file(results, out_file_name)
-        if cmd_flag_plot_results in cmds:
-            self.plot_points_to_ee(self, results)
         return results
+
+    def cmd_analyze_brute_manipulability(self, cmds):
+        excluded = []
+        num_iters = 15
+        if cmd_flag_brute_excluded in cmds:
+            exclude_str = post_flag(cmd_flag_brute_excluded, cmds)
+            excluded = [int(item) for item in exclude_str[1:-1].split(',')]
+        if cmd_flag_num_iters in cmds:
+            num_iters = int(post_flag(cmd_flag_num_iters, cmds))
+        results = self.analyzer.analyze_brute_manipulability_on_joints(num_iters, excluded)
+        save_output, out_file_name = self.save_results_flag(cmds)
+        if save_output:
+            disp('saving results')
+            self.save_to_file(results, out_file_name)
+        if cmd_flag_plot_results in cmds:
+            disp('plotting')
+            plt.figure()
+            ax = plt.axes(projection='3d')
+            ax.set_xlim3d(-4,4)
+            ax.set_ylim3d(-4,4)
+            ax.set_zlim3d(-4,4)
+            result_len = len(results)
+            for i in range(result_len):
+                r = results[i]
+                progressBar(i, result_len-1, 'plotting')
+                score = r[1]
+                col = score_point(score)
+                ax.scatter3D(r[0][0], r[0][1], r[0][2], s=1, color=col)
+            plt.show()
 
     def cmd_start_sequence(self):
         """
@@ -809,6 +845,8 @@ class CommandExecutor:
             return self.cmd_analyze_manipulability_over_trajectory(cmds_parsed)
         elif cmds_parsed[0] == cmd_str_view_manipulability_space:
             return self.cmd_view_manipulability_space(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_brute_manipulability:
+            return self.cmd_analyze_brute_manipulability(cmds_parsed)
 
 
 class WorkspaceCommandLine(CommandExecutor):
@@ -947,6 +985,8 @@ class WorkspaceCommandLine(CommandExecutor):
                 disp(self.cmd_save_sequence.__doc__)
             elif cmds[1] == cmd_str_view_manipulability_space:
                 disp(self.cmd_view_manipulability_space.__doc__)
+            elif cmds[1] == cmd_str_brute_manipulability:
+                disp(self.cmd_analyze_brute_manipulability.__doc__)
         else:
             disp('\nhelp [cmd] for details\nValid Commands:')
             for command in valid_commands:

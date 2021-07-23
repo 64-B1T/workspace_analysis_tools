@@ -739,6 +739,136 @@ class WorkspaceAnalyzer:
         disp(end - start, 'Elapsed')
         return results
 
+    def _parallel_brute_manipulability_collision_head(
+            self, thetas_prior, resolution, excluded, dof_iter, start,
+            total_iters, last_iter, collision_detect):
+            collision_manager = None
+            if collision_detect:
+                collision_manager = ColliderManager()
+                collision_manager.bind(ColliderArm(self.bot, 'model'))
+            results = self.analyze_brute_manipulability_on_joints_recursive(
+                thetas_prior, resolution, excluded, dof_iter,
+                time.time(), total_iters, 0,
+                collision_detect, collision_manager)
+            return results
+
+    def _parallel_brute_manipulability_recursive_head(
+            self, thetas_prior, resolution, excluded, dof_iter, start,
+            total_iters, last_iter, collision_detect, collision_manager):
+
+        #If the resolution is lower than number of processors, probably not worth it.
+        if resolution < self.num_procs:
+            return self.analyze_brute_manipulability_on_joints_recursive(
+                    thetas_prior, resolution, excluded, dof_iter,
+                    start, total_iters, last_iter,
+                    collision_detect, collision_manager)
+
+        #If the end effector is excluded, we don't have to segment on it.
+        if dof_iter in excluded:
+            theta_list = [0.0] + thetas_prior
+            return self.parallel_brute_manipulability_recursive_head(
+                theta_list, resolution, excluded, dof_iter - 1,
+                start, total_iters, last_iter,
+                collision_detect, collision_manager)
+
+        #If not, now we partition
+        joint_configurations = np.linspace(
+            self.bot.joint_mins[dof_iter],
+            self.bot.joint_maxs[dof_iter],
+            resolution)
+
+        #Determine how to evenly chunk tasks
+        start = time.time()
+        async_results = []
+        results = []
+        with mp.Pool(self.num_procs) as pool:
+            for i in range(resolution):
+                theta_i = joint_configurations[i]
+                theta_list = [theta_i] + thetas_prior
+                progressBar(i,
+                        resolution - 1,
+                        prefix='Spawning Async Tasks        ',
+                        ETA=start)
+                async_results.append(pool.apply_async(
+                    self._parallel_brute_manipulability_collision_head,
+                    (thetas_prior, resolution, excluded, dof_iter - 1, start,
+                    total_iters, last_iter,
+                    collision_detect, collision_manager)
+                ))
+                waiter = WaitText('Running Brute Collection in Parallel')
+                while not async_results[-1].ready():
+                    waiter.print()
+                    time.sleep(.5)
+                waiter.done()
+                start_2 = time.time()
+                for i in range(self.num_procs):
+                    progressBar(i,
+                            self.num_procs - 1,
+                            prefix='Collecting Async Results',
+                            ETA=start_2)
+                    results.extend(async_results[i].get(timeout=10000))
+            return results
+
+    def analyze_brute_manipulability_on_joints_recursive(
+            self, thetas_prior, resolution, excluded, dof_iter, start,
+            total_iters, last_iter, collision_detect, collision_manager):
+        success_list = []
+        if dof_iter in excluded:
+            if dof_iter > 0:
+                theta_list = [0.0] + thetas_prior
+                return self.analyze_brute_manipulability_on_joints_recursive(
+                        theta_list, resolution, excluded, dof_iter - 1, start,
+                        total_iters, last_iter, collision_detect, collision_manager)
+            joint_configurations = np.zeros(resolution)
+        else:
+            joint_configurations = np.linspace(
+                self.bot.joint_mins[dof_iter],
+                self.bot.joint_maxs[dof_iter],
+                resolution)
+        for i in range(resolution):
+            if dof_iter == len(self.bot.joint_mins) - 1:
+                progressBar(i, resolution-1, 'Running Brute Manipulability', ETA=start)
+            theta_i = joint_configurations[i]
+            theta_list = [theta_i] + thetas_prior
+            if dof_iter == 0:
+                #print(theta_list)
+                theta_array = np.array(theta_list)
+                ee_pos, success = self.bot.FK(theta_array)
+                if collision_detect:
+                    collision_manager.update()
+                    if collision_manager.checkInternalCollisions():
+                        continue
+                if success:
+                    mrv, mrw = calculate_manipulability_score(self.bot, theta_array)
+                    score = (mrv + mrw) / 2
+                    result = [ee_pos, score, theta_array, [mrv, mrw]]
+                    success_list.append(result)
+            else:
+                last_iter += ((i * resolution) ** (dof_iter - 1))
+                success_list.extend(
+                    self.analyze_brute_manipulability_on_joints_recursive(
+                            theta_list, resolution, excluded,
+                            dof_iter - 1, start, total_iters,
+                            last_iter,
+                            collision_detect, collision_manager))
+        return success_list
+
+    def analyze_brute_manipulability_on_joints(self, resolution, joint_indexes, parallel=False, collision_detect=False):
+        num_dof = len(self.bot.joint_mins)
+        disp('Starting')
+        total_iters = resolution ** (num_dof - len(joint_indexes))
+        disp('Anticipated Iterations: ' + str(total_iters))
+        collision_manager = None
+        if collision_detect:
+            collision_manager = ColliderManager()
+            collision_manager.bind(ColliderArm(self.bot, 'model'))
+        results = self.analyze_brute_manipulability_on_joints_recursive(
+            [], resolution, joint_indexes, num_dof - 1,
+            time.time(), total_iters, 0,
+            collision_detect, collision_manager)
+        disp('complete')
+        return results
+
 
     def _total_workspace_recursive_helper(self, thetas_prior,
                                           iterations_per_dof, dof_iter):
