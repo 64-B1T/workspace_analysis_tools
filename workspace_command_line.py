@@ -748,14 +748,26 @@ class CommandExecutor:
         return results
 
     def cmd_analyze_brute_manipulability(self, cmds):
+        """
+        Analyze Manipulability using a brute-force FK based approach
+        -numIterations: number of iterations per joint to use
+        -exclude: list of joints [x,y,z...] to lock at 0 if desired.
+        -checkCollisions: check collisions
+        -parallel: Calculate in parallel for increased efficiency. Default false
+        -plot: plot results
+        -o: output file name
+        """
         excluded = []
         num_iters = 15
+        parallel = cmd_flag_parallel in cmds
+        collision_detect = cmd_flag_collision_detect in cmds
         if cmd_flag_brute_excluded in cmds:
             exclude_str = post_flag(cmd_flag_brute_excluded, cmds)
             excluded = [int(item) for item in exclude_str[1:-1].split(',')]
         if cmd_flag_num_iters in cmds:
             num_iters = int(post_flag(cmd_flag_num_iters, cmds))
-        results = self.analyzer.analyze_brute_manipulability_on_joints(num_iters, excluded)
+        results = self.analyzer.analyze_brute_manipulability_on_joints(
+                num_iters, excluded, parallel, collision_detect)
         save_output, out_file_name = self.save_results_flag(cmds)
         if save_output:
             disp('saving results')
