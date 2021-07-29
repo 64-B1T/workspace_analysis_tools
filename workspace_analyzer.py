@@ -44,6 +44,19 @@ ALPHA_VALUE = 1.2
 
 
 # Helper Functions That You Probably Shouldn't Need To Call Directly
+def wait_for(result, message):
+    """
+    Wait for an asynchronous result to complete proessing and also display a waiting message
+    Args:
+        result: asynchronous result
+        message: message to display while waiting
+    """
+    waiter = WaitText(message)
+    while not result.read():
+        waiter.print()
+        time.sleep(0.5)
+    waiter.done()
+
 def ignore_close_points(seen_points, empty_results, test_point, minimum_dist):
     """
     Ignores a point too close to other close points
@@ -608,7 +621,7 @@ def brute_fk_manipulability_recursive_process(bot, thetas_prior,
             #print(theta_list)
             theta_array = np.array(theta_list)
             ee_pos = bot.FK(theta_array)
-            if(isinstance(ee_pos, tuple)):
+            if isinstance(ee_pos, tuple):
                 ee_pos = ee_pos[0]
             if collision_detect:
                 collision_manager.update()
@@ -679,11 +692,7 @@ class WorkspaceAnalyzer:
                 async_results.append(pool.apply_async(chunk_point_processing, (
                         desired_poses[small_ind:large_ind], sphere, true_rez, self.bot.robot,
                         use_jacobian, collision_detect, stl_mesh, exempt_ee, display_eta)))
-            waiter = WaitText('Running Point Detection    ')
-            while not async_results[-1].ready():
-                waiter.print()
-                time.sleep(.5)
-            waiter.done()
+            wait_for(async_results[-1], 'Running Point Detection    ')
             start_2 = time.time()
             for i in range(self.num_procs):
                 progressBar(i,
@@ -877,11 +886,7 @@ class WorkspaceAnalyzer:
                     (self.bot.robot, theta_list, resolution,
                     excluded, dof_iter - 1, collision_detect)
                 ))
-            waiter = WaitText('Running Brute Collection in Parallel')
-            while not async_results[-1].ready():
-                waiter.print()
-                time.sleep(.5)
-            waiter.done()
+            wait_for(async_results[-1], 'Running Brute Collection in Parallel')
             start_2 = time.time()
             for i in range(resolution):
                 progressBar(i,
@@ -1318,7 +1323,7 @@ class WorkspaceAnalyzer:
                             point_list_len - 1,
                             'Filling Trajectory      ',
                             ETA=start)
-                if i == point_list_len - 1:
+                if i == point_list_len - 1:  # Add the last point, ensuring at least one point
                     new_points.append(point_list[i])
                     continue
                 start_point = point_list[i]
@@ -1327,6 +1332,9 @@ class WorkspaceAnalyzer:
                 if distance < point_interpolation_dist:
                     continue
                 while distance > point_interpolation_dist:
+                    # Linear gap closes by directly interpolating between waypoints and scaling by
+                    #   a distance, creating a linear path.
+                    # Arc gap creates a more curved or 'arced' trajectory from waypoints A to B
                     if point_interpolation_mode == 1:
                         start_point = fsr.closeLinearGap(start_point, end_point,
                                                    point_interpolation_dist)
