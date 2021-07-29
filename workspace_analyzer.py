@@ -670,7 +670,6 @@ def brute_fk_manipulability_recursive_process(bot, thetas_prior,
                         collision_detect, collision_manager))
     return success_list
 
-    
 class WorkspaceAnalyzer:
     """
     Used To Analyze A Variety of Pose Configurations for Defined Robots
@@ -681,7 +680,7 @@ class WorkspaceAnalyzer:
         cpu_count = os.cpu_count()
         self.num_procs = 4
         if cpu_count is not None:
-            self.num_procs = cpu_count - 1 # Leave a CPU for doing other things
+            self.num_procs = cpu_count - 1  # Leave a CPU for doing other things
         if not self.bot.is_ready():
             print('Please Check Bindings')
         self.unique_decimals = UNIQUE_DECIMALS
@@ -806,8 +805,6 @@ class WorkspaceAnalyzer:
             Successful Poses: Numpy[i,4,4] NDArray indicating successful poses, None if none
             Failed Poses: Numpy [i,4,4] NdArray indicating failed poses, None if all are Successful
         """
-        #TODO(Liam) add in swich to pull TM(matrix) from tm(object) if necessary
-        #I don't think it should be necessary: can be otherwise specified in lambda funcs
         num_poses = len(desired_poses)
         failed_poses = []
         successful_poses = []
@@ -844,7 +841,6 @@ class WorkspaceAnalyzer:
         results = []
 
         sphere, true_rez = gen_manip_sphere(manip_resolution)
-
         collision_manager = None
 
         start = time.time()
@@ -974,19 +970,13 @@ class WorkspaceAnalyzer:
             success_list: List of successful transformation matrices
         """
         success_list = []
-        #disp(iterations_per_dof, "IterPerDof")
-        # total_iter = iterations_per_dof * num_dof
         joint_configurations = np.linspace(self.bot.joint_mins[dof_iter],
                                            self.bot.joint_maxs[dof_iter],
                                            iterations_per_dof)
         for i in range(iterations_per_dof):
             theta_i = joint_configurations[i]
             theta_list = [theta_i] + thetas_prior
-
-            #progressBar(total_iter-(iterations_per_dof*(dof_iter+1))+i, total_iter-1)
-            #print(theta_list)
             if dof_iter == 0:
-                #print(theta_list)
                 ee_pos, success = self.bot.FK(np.array(theta_list))
                 if success:
                     success_list.append(ee_pos)
@@ -1008,7 +998,6 @@ class WorkspaceAnalyzer:
         """
         disp('Beginning Analysis')
         num_dof = len(self.bot.joint_mins)
-        #iterations_per_dof = math.floor(num_iterations**(1/float(num_dof)))
         iterations_per_dof = num_iterations
 
         disp('Calibrating ETA')
@@ -1256,7 +1245,6 @@ class WorkspaceAnalyzer:
                     continue
             #Ignore points which are too far away
             if fsr.distance(p, bot_base) > self.max_dist:
-                #TODO(Liam) determine max reach from AShape
                 empty_results.append(process_empty(p))
                 continue
             #Ignore points which are too close together
