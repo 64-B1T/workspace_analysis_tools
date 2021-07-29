@@ -19,7 +19,6 @@ class AlphaShape:
 
         Returns:
             AlphaShape: alpha shape of requeted point cloud
-
         """
         shape = None
         if mode == 1:
