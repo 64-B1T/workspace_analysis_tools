@@ -1,6 +1,7 @@
 import numpy as np
 import sys
 import pickle
+import time
 sys.path.append('..')
 from faser_math import tm
 
@@ -87,6 +88,20 @@ def sort_cloud(cloud):
     array_to_process = np.array(list_array_input)
     processed_array = np.unique(array_to_process.round(decimals=1), axis=0)
     return processed_array
+
+def wait_for(result, message):
+    """
+    Wait for an asynchronous result to complete proessing and also display a waiting message
+    Args:
+        result: asynchronous result
+        message: message to display while waiting
+    """
+    waiter = WaitText(message)
+    while not result.read():
+        waiter.print()
+        time.sleep(0.5)
+    waiter.done()
+
 
 class WaitText:
     """

@@ -672,16 +672,16 @@ class CommandExecutor:
         Returns:
             list: target values related to givens
         """
-        targetNorm = 0
+        target_norm = 0
         if cmd_flag_input_file in cmds:
             object_file_name = post_flag(cmd_flag_input_file, cmds)
         if cmd_flag_jac_norm in cmds:
-            targetNorm = float(post_flag(cmd_flag_jac_norm))
+            target_norm = float(post_flag(cmd_flag_jac_norm))
         angular = cmd_flag_jac_angular in cmds
         with open(object_file_name, 'rb') as fp:
             data = pickle.load(fp)
         results = self.analyzer.analyze_joint_related_to_end_effector_vals(
-                data, targetNorm, angular)
+                data, target_norm, angular)
         save_output, out_file_name = self.save_results_flag(cmds)
         if save_output:
             self.save_to_file(results, out_file_name)

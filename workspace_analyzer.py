@@ -11,7 +11,7 @@ import time
 
 #This module imports
 from alpha_shape import AlphaShape
-from workspace_helper_functions import WaitText
+from workspace_helper_functions import WaitText, wait_for
 
 # Other module imports
 sys.path.append('../')
@@ -44,19 +44,6 @@ ALPHA_VALUE = 1.2
 
 
 # Helper Functions That You Probably Shouldn't Need To Call Directly
-def wait_for(result, message):
-    """
-    Wait for an asynchronous result to complete proessing and also display a waiting message
-    Args:
-        result: asynchronous result
-        message: message to display while waiting
-    """
-    waiter = WaitText(message)
-    while not result.read():
-        waiter.print()
-        time.sleep(0.5)
-    waiter.done()
-
 
 def ignore_close_points(seen_points, empty_results, test_point, minimum_dist):
     """
