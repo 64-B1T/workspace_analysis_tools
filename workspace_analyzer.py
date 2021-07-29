@@ -676,6 +676,13 @@ class WorkspaceAnalyzer:
     """
 
     def __init__(self, linkedRobot):
+        """
+        Create a workspace analyzer object which can be implemented by other software
+        Args:
+            linkedRobot: Linked robot to analyze
+        Returns:
+            WorkspaceAnalyzer: Resulting analysis handle
+        """
         self.bot = linkedRobot
         cpu_count = os.cpu_count()
         self.num_procs = 4
