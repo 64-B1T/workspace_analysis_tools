@@ -12,7 +12,7 @@ import sys
 from faser_math import tm
 from faser_plotting.Draw.Draw import DrawRectangle, DrawAxes, drawMesh
 from faser_robot_kinematics import loadArmFromURDF
-from faser_utils.disp.disp import disp
+from faser_utils.disp.disp import disp, progressBar
 
 #This Module Imports
 from robot_link import RobotLink
@@ -47,6 +47,7 @@ cmd_str_analyze_manipulability_object_surface = 'objectSurfaceManipulability'
 cmd_str_manipulability_within_volume = 'manipulabilityWithinVolume'
 cmd_str_manipulability_over_trajectory = 'manipulabilityOverTrajectory'
 cmd_str_view_manipulability_space = 'viewManipulabilitySpace'
+cmd_str_brute_manipulability = 'analyzeBruteManipulability'
 cmd_str_analyze_force_norm = 'analyzeForceNorm'
 cmd_str_analyze_velocity_norm = 'analyzeVelocityNorm'
 cmd_str_analyze_wrench_torques = 'analyzeWrenchTorques'
@@ -66,6 +67,7 @@ valid_commands = [
     cmd_str_analyze_total_workspace_alpha,
     cmd_str_analyze_unit_shell_manipulability,
     cmd_str_analyze_manipulability_object_surface,
+    cmd_str_brute_manipulability,
     cmd_str_manipulability_within_volume,
     cmd_str_manipulability_over_trajectory,
     cmd_str_view_manipulability_space,
@@ -119,13 +121,15 @@ cmd_flag_trajectory_arc_interp = '-arcInterpolation'
 cmd_flag_viewer_draw_alpha = '-alphaFile'
 cmd_flag_viewer_draw_slices = '-draw3DSlices'
 
-#Vels and TOrques Flags
+#Vels and Torques Flags
 cmd_flag_jac_norm = '-targetNorm'
 cmd_flag_jac_grav = '-grav'
 cmd_flag_jac_origin = '-massCG'
 cmd_flag_jac_mass = '-mass'
 cmd_flag_jac_angular = '-angular'
 
+#Brute Manipulability Joints Flags
+cmd_flag_brute_excluded = '-exclude'
 
 class CommandExecutor:
     """Superclass for workspace command line, to enable use in other applications more easily"""
@@ -184,6 +188,7 @@ class CommandExecutor:
 
         def get_jt():
             return link.robot.getJointTransforms()
+
         link.bind_ee(get_ee)
         link.bind_fk(do_fk)
         link.bind_ik(do_ik)
@@ -197,6 +202,20 @@ class CommandExecutor:
         link.col_props = arm.col_props
         return link
 
+    def load_robot_from_module(self, dir_name, file_name):
+        """
+        Load a robot from a module file
+        Args:
+            dir_name: directory path .
+            file_name: module file name
+        Returns:
+            RobotLink: Resulting RobotLink Object
+        """
+        sys.path.append(dir_name)
+        file_name_sanitized = file_name.replace('.py', '')
+        temp_module = importlib.import_module(file_name_sanitized)
+        return temp_module.load_arm()
+
     def cmd_load_robot(self, cmds):
         """
         loadRobot -from___ file_name.
@@ -207,15 +226,14 @@ class CommandExecutor:
         """
         if cmd_flag_from_urdf in cmds:
             file_name = post_flag(cmd_flag_from_urdf, cmds)
-            return self.load_robot_from_urdf(file_name)
-        if cmd_flag_from_directory in cmds:
+            link = self.load_robot_from_urdf(file_name)
+        if cmd_flag_from_directory in cmds and cmd_flag_from_file in cmds:
             dir_name = post_flag(cmd_flag_from_directory, cmds)
-            sys.path.append(dir_name)
-        if cmd_flag_from_file in cmds:
             file_name = post_flag(cmd_flag_from_file, cmds)
-            file_name_sanitized = file_name.replace('.py','')
-            temp_module = importlib.import_module(file_name_sanitized)
-            return temp_module.load_arm()
+            link = self.load_robot_from_module(dir_name, file_name)
+        self.analyzer = WorkspaceAnalyzer(link)
+        self.ready = True
+        return link
 
     def load_point_cloud_in_cmds(self, cmds):
         """
@@ -301,6 +319,9 @@ class CommandExecutor:
         """
         plt.figure()
         ax = plt.axes(projection='3d')
+        ax.set_xlim3d(-4,4)
+        ax.set_ylim3d(-4,4)
+        ax.set_zlim3d(-4,4)
         for r in results:
             score = r[1]
             col = score_point(score)
@@ -328,7 +349,7 @@ class CommandExecutor:
         plot = False
 
 
-        point_list = load_point_cloud_from_file(cmds)
+        point_list = load_point_cloud_from_file(post_flag(cmd_flag_input_file, cmds))
         if point_list is None:
             return
 
@@ -349,6 +370,7 @@ class CommandExecutor:
             self.plot_manipulability_grid(results, 0.1)
         if save_output:
             self.save_to_file(results, out_file_name)
+        return results
 
 
     def cmd_analyze_total_workspace_exhaustive(self, cmds):
@@ -371,6 +393,7 @@ class CommandExecutor:
         self.exhaustive_pose_cloud = pose_cloud
         if save_output:
             self.save_to_file(pose_cloud, out_file_name)
+        return pose_cloud
 
     def cmd_analyze_total_workspace_functional(self, cmds):
         """
@@ -394,6 +417,7 @@ class CommandExecutor:
 
         if save_output:
             self.save_to_file(pose_cloud, out_file_name)
+        return pose_cloud
 
     def cmd_analyze_manipulability_unit_shells(self, cmds):
         """
@@ -428,6 +452,7 @@ class CommandExecutor:
             self.plot_manipulability_grid(results, 0.25)
         if save_output:
             self.save_to_file(results, out_file_name)
+        return results
 
     def cmd_analyze_manipulability_object_surface(self, cmds):
         """
@@ -506,6 +531,7 @@ class CommandExecutor:
         self.pose_results_object_surface = results
         if save_output:
             self.save_to_file(results, out_file_name)
+        return results
 
     def cmd_analyze_manipulability_within_volume(self, cmds):
         """
@@ -560,6 +586,7 @@ class CommandExecutor:
             self.plot_manipulability_grid(results, grid_resolution)
         if save_output:
             self.save_to_file(results, out_file_name)
+        return results
 
     def cmd_analyze_manipulability_over_trajectory(self, cmds):
         """
@@ -586,23 +613,16 @@ class CommandExecutor:
             return
         else:
             point_list = load_point_cloud_from_file(post_flag(cmd_flag_input_file, cmds))
-
         if cmd_flag_manip_res in cmds:
             manip_resolution = int(post_flag(cmd_flag_manip_res, cmds))
-
         if cmd_flag_trajectory_unit_manip in cmds:
             manipulability_mode = 2
-
         if cmd_flag_trajectory_interpolation in cmds:
             point_interpolation_dist = float(post_flag(cmd_flag_trajectory_interpolation, cmds))
-
         if cmd_flag_trajectory_arc_interp in cmds:
             point_interpolation_mode = 2
-
         collision_detect = cmd_flag_collision_detect in cmds
-
         save_output, out_file_name = self.save_results_flag(cmds)
-
         plot = cmd_flag_plot_results in cmds
 
         results = self.analyzer.analyze_manipulability_over_trajectory(
@@ -620,6 +640,7 @@ class CommandExecutor:
             plt.show()
         if save_output:
             self.save_to_file(results, out_file_name)
+        return results
 
     def cmd_view_manipulability_space(self, cmds):
         """
@@ -720,11 +741,52 @@ class CommandExecutor:
             data = pickle.load(fp)
         results = self.analyzer.analyze_matching_joint_torques(data, origin, mass, grav_vector)
         save_output, out_file_name = self.save_results_flag(cmds)
+        if cmd_flag_plot_results in cmds:
+            self.plot_points_to_ee(results, 0.1)
         if save_output:
             self.save_to_file(results, out_file_name)
-        if cmd_flag_plot_results in cmds:
-            self.plot_points_to_ee(self, results)
         return results
+
+    def cmd_analyze_brute_manipulability(self, cmds):
+        """
+        Analyze Manipulability using a brute-force FK based approach
+        -numIterations: number of iterations per joint to use
+        -exclude: list of joints [x,y,z...] to lock at 0 if desired.
+        -checkCollisions: check collisions
+        -parallel: Calculate in parallel for increased efficiency. Default false
+        -plot: plot results
+        -o: output file name
+        """
+        excluded = []
+        num_iters = 15
+        parallel = cmd_flag_parallel in cmds
+        collision_detect = cmd_flag_collision_detect in cmds
+        if cmd_flag_brute_excluded in cmds:
+            exclude_str = post_flag(cmd_flag_brute_excluded, cmds)
+            excluded = [int(item) for item in exclude_str[1:-1].split(',')]
+        if cmd_flag_num_iters in cmds:
+            num_iters = int(post_flag(cmd_flag_num_iters, cmds))
+        results = self.analyzer.analyze_brute_manipulability_on_joints(
+                num_iters, excluded, parallel, collision_detect)
+        save_output, out_file_name = self.save_results_flag(cmds)
+        if save_output:
+            disp('saving results')
+            self.save_to_file(results, out_file_name)
+        if cmd_flag_plot_results in cmds:
+            disp('plotting')
+            plt.figure()
+            ax = plt.axes(projection='3d')
+            ax.set_xlim3d(-4,4)
+            ax.set_ylim3d(-4,4)
+            ax.set_zlim3d(-4,4)
+            result_len = len(results)
+            for i in range(result_len):
+                r = results[i]
+                progressBar(i, result_len-1, 'plotting')
+                score = r[1]
+                col = score_point(score)
+                ax.scatter3D(r[0][0], r[0][1], r[0][2], s=1, color=col)
+            plt.show()
 
     def cmd_start_sequence(self):
         """
@@ -735,6 +797,68 @@ class CommandExecutor:
         for cmd in self.sequence:
             self.cmd_parser(cmd)
         disp('Sequence Complete')
+
+    def cmd_prepare(self, cmds):
+        cmd_no_eq = cmds.replace('=', ' ')
+        cmds_parsed = cmd_no_eq.split(' ')
+        return cmds_parsed
+
+    def cmd_parser(self, cmd):
+        """
+        Parse a command string.
+
+        Args:
+            cmd: command string passed in
+        """
+        cmds_parsed = self.cmd_prepare(cmd)
+        if not cmds_parsed[0] in valid_commands:
+            disp('Unrecognized command. Please try again. You can use \'help\' for help')
+            return
+        if cmds_parsed[0] == cmd_str_help:
+            self.cmd_help(cmds_parsed)
+            return
+        if cmds_parsed[0] == cmd_str_exit:
+            self.done = True
+            return False
+        elif cmds_parsed[0] == cmd_str_schedule_sequence:
+            self.cmd_schedule_sequence()
+            return
+        elif cmds_parsed[0] == cmd_str_start_sequence:
+            self.cmd_start_sequence()
+            return
+        elif cmds_parsed[0] == cmd_str_view_sequence:
+            self.cmd_view_sequence()
+            return
+        elif cmds_parsed[0] == cmd_str_save_sequence:
+            self.cmd_save_sequence(cmds_parsed)
+            return
+        elif cmds_parsed[0] == cmd_str_load_sequence:
+            self.cmd_load_sequence(cmds_parsed)
+            return
+        elif cmds_parsed[0] == cmd_str_load_robot:
+            self.cmd_load_robot(cmds_parsed)
+            return
+        if not self.ready:
+            disp('Please load a robot first')
+            return
+        if cmds_parsed[0] == cmd_str_analyze_total_workspace_exhaustive:
+            return self.cmd_analyze_total_workspace_exhaustive(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_analyze_task_manipulability:
+            return self.cmd_analyze_task_manipulability(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_analyze_total_workspace_alpha:
+            return self.cmd_analyze_total_workspace_functional(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_analyze_unit_shell_manipulability:
+            return self.cmd_analyze_manipulability_unit_shells(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_analyze_manipulability_object_surface:
+            return self.cmd_analyze_manipulability_object_surface(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_manipulability_within_volume:
+            return self.cmd_analyze_manipulability_within_volume(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_manipulability_over_trajectory:
+            return self.cmd_analyze_manipulability_over_trajectory(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_view_manipulability_space:
+            return self.cmd_view_manipulability_space(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_brute_manipulability:
+            return self.cmd_analyze_brute_manipulability(cmds_parsed)
 
 
 class WorkspaceCommandLine(CommandExecutor):
@@ -835,64 +959,6 @@ class WorkspaceCommandLine(CommandExecutor):
             except Exception as e:
                 disp('Command failure. Details: ' + str(e))
 
-    def cmd_parser(self, cmd):
-        """
-        Parse a command string.
-
-        Args:
-            cmd: command string passed in
-        """
-        cmd_no_eq = cmd.replace('=', ' ')
-        cmds_parsed = cmd_no_eq.split(' ')
-        if not cmds_parsed[0] in valid_commands:
-            disp('Unrecognized command. Please try again. You can use \'help\' for help')
-            return
-        if cmds_parsed[0] == cmd_str_help:
-            self.cmd_help(cmds_parsed)
-            return
-        if cmds_parsed[0] == cmd_str_exit:
-            self.done = True
-            return False
-        elif cmds_parsed[0] == cmd_str_schedule_sequence:
-            self.cmd_schedule_sequence()
-            return
-        elif cmds_parsed[0] == cmd_str_start_sequence:
-            self.cmd_start_sequence()
-            return
-        elif cmds_parsed[0] == cmd_str_view_sequence:
-            self.cmd_view_sequence()
-            return
-        elif cmds_parsed[0] == cmd_str_save_sequence:
-            self.cmd_save_sequence(cmds_parsed)
-            return
-        elif cmds_parsed[0] == cmd_str_load_sequence:
-            self.cmd_load_sequence(cmds_parsed)
-            return
-        elif cmds_parsed[0] == cmd_str_load_robot:
-            link = self.cmd_load_robot(cmds_parsed)
-            self.analyzer = WorkspaceAnalyzer(link)
-            self.ready = True
-            return
-        if not self.ready:
-            disp('Please load a robot first')
-            return
-        if cmds_parsed[0] == cmd_str_analyze_total_workspace_exhaustive:
-            self.cmd_analyze_total_workspace_exhaustive(cmds_parsed)
-        elif cmds_parsed[0] == cmd_str_analyze_task_manipulability:
-            self.cmd_analyze_task_manipulability(cmds_parsed)
-        elif cmds_parsed[0] == cmd_str_analyze_total_workspace_alpha:
-            self.cmd_analyze_total_workspace_functional(cmds_parsed)
-        elif cmds_parsed[0] == cmd_str_analyze_unit_shell_manipulability:
-            self.cmd_analyze_manipulability_unit_shells(cmds_parsed)
-        elif cmds_parsed[0] == cmd_str_analyze_manipulability_object_surface:
-            self.cmd_analyze_manipulability_object_surface(cmds_parsed)
-        elif cmds_parsed[0] == cmd_str_manipulability_within_volume:
-            self.cmd_analyze_manipulability_within_volume(cmds_parsed)
-        elif cmds_parsed[0] == cmd_str_manipulability_over_trajectory:
-            self.cmd_analyze_manipulability_over_trajectory(cmds_parsed)
-        elif cmds_parsed[0] == cmd_str_view_manipulability_space:
-            self.cmd_view_manipulability_space(cmds_parsed)
-
     def cmd_help(self, cmds):
         """
         Assist the user in function understanding.
@@ -931,6 +997,8 @@ class WorkspaceCommandLine(CommandExecutor):
                 disp(self.cmd_save_sequence.__doc__)
             elif cmds[1] == cmd_str_view_manipulability_space:
                 disp(self.cmd_view_manipulability_space.__doc__)
+            elif cmds[1] == cmd_str_brute_manipulability:
+                disp(self.cmd_analyze_brute_manipulability.__doc__)
         else:
             disp('\nhelp [cmd] for details\nValid Commands:')
             for command in valid_commands:

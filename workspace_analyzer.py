@@ -44,6 +44,19 @@ ALPHA_VALUE = 1.2
 
 
 # Helper Functions That You Probably Shouldn't Need To Call Directly
+def wait_for(result, message):
+    """
+    Wait for an asynchronous result to complete proessing and also display a waiting message
+    Args:
+        result: asynchronous result
+        message: message to display while waiting
+    """
+    waiter = WaitText(message)
+    while not result.read():
+        waiter.print()
+        time.sleep(0.5)
+    waiter.done()
+
 def ignore_close_points(seen_points, empty_results, test_point, minimum_dist):
     """
     Ignores a point too close to other close points
@@ -491,6 +504,18 @@ def process_point(p,
             success_count += 1
     return [p, success_count / true_rez, successes, thetas]
 
+def setup_collision_manager(bot, stl_mesh = None, exempt_ee = False):
+    collision_manager = ColliderManager()
+    collision_manager.bind(ColliderArm(bot, 'model'))
+    if stl_mesh is not None:
+        obstacle = ColliderObstacles('object_surface')
+        obstacle.addMesh('object', stl_mesh)
+        collision_manager.bind(obstacle)
+    if exempt_ee:
+        collision_manager.collision_objects[0].deleteEE()
+        collision_manager.collision_objects[0].deleteEE()
+    return collision_manager
+
 def chunk_point_processing(points, sphere, true_rez, bot,
         use_jacobian, collision_detect, stl_mesh = None,
         exempt_ee = False, display_eta = False):
@@ -515,15 +540,7 @@ def chunk_point_processing(points, sphere, true_rez, bot,
 
     collision_manager = None
     if collision_detect:
-        collision_manager = ColliderManager()
-        collision_manager.bind(ColliderArm(bot, 'model'))
-        if stl_mesh is not None:
-            obstacle = ColliderObstacles('object_surface')
-            obstacle.addMesh('object', stl_mesh)
-            collision_manager.bind(obstacle)
-        if exempt_ee:
-            collision_manager.collision_objects[0].deleteEE()
-            collision_manager.collision_objects[0].deleteEE()
+        collision_manager = setup_collision_manager(bot, stl_mesh, exempt_ee)
     results = []
     last_iter = len(points)
     start = time.time()
@@ -538,7 +555,89 @@ def chunk_point_processing(points, sphere, true_rez, bot,
                     ETA=start)
     return results
 
+def parallel_brute_manipulability_collision_head(
+        bot, thetas_prior, resolution, excluded,
+        dof_iter, collision_detect):
+    """
+    Head function to set up brute manipulability/reachability analysis in parallel
+    Args:
+        bot: Robot object
+        thetas_prior: prior thetas (usually going to be an empty list)
+        resolution: number of positions to interpolate per point
+        excluded: list of joints to exclude from conisderation (can be empty)
+        dof_iter: current iteration of the joints of the robot to consider
+        collision_detect: Boolean to enable collision detection
+    Returns:
+        list: results list
+    """
 
+    collision_manager = None
+    if collision_detect:
+        collision_manager = setup_collision_manager(bot)
+    results = brute_fk_manipulability_recursive_process(bot,
+        thetas_prior, resolution, excluded, dof_iter,
+        time.time(), collision_detect, collision_manager)
+    return results
+
+
+def brute_fk_manipulability_recursive_process(bot, thetas_prior,
+        resolution, excluded, dof_iter, start, collision_detect, collision_manager):
+    """
+    Brute force Forward Kinematics based manipulability analysis
+
+    Args:
+        bot: Robot object
+        thetas_prior: prior thetas (usually going to be an empty list)
+        resolution: number of positions to interpolate per point
+        excluded: list of joints to exclude from conisderation (can be empty)
+        dof_iter: current iteration of the joints of the robot to consider
+        collision_detect: Boolean to enable collision detection
+        start: start time
+        collision_detect: Boolean to enable collision detection
+        collision_manager: Collision Manager object
+    Returns:
+        list: results list
+
+    """
+    success_list = []
+    if dof_iter in excluded:
+        if dof_iter > 0:
+            theta_list = [0.0] + thetas_prior
+            return brute_fk_manipulability_recursive_process(bot,
+                    theta_list, resolution, excluded, dof_iter - 1, start,
+                    collision_detect, collision_manager)
+        joint_configurations = np.zeros(resolution)
+    else:
+        joint_configurations = np.linspace(
+            bot.joint_mins[dof_iter],
+            bot.joint_maxs[dof_iter],
+            resolution)
+    for i in range(resolution):
+        if dof_iter == len(bot.joint_mins) - 1:
+            progressBar(i, resolution-1, 'Running Brute Manipulability', ETA=start)
+        theta_i = joint_configurations[i]
+        theta_list = [theta_i] + thetas_prior
+        if dof_iter == 0:
+            #print(theta_list)
+            theta_array = np.array(theta_list)
+            ee_pos = bot.FK(theta_array)
+            if isinstance(ee_pos, tuple):
+                ee_pos = ee_pos[0]
+            if collision_detect:
+                collision_manager.update()
+                if collision_manager.checkCollisions()[0]:
+                    continue
+            mrv, mrw = calculate_manipulability_score(bot, theta_array)
+            score = (mrv + mrw) / 2
+            result = [ee_pos, score, theta_array, [mrv, mrw]]
+            success_list.append(result)
+        else:
+            success_list.extend(
+                brute_fk_manipulability_recursive_process(bot,
+                        theta_list, resolution, excluded,
+                        dof_iter - 1, start,
+                        collision_detect, collision_manager))
+    return success_list
 class WorkspaceAnalyzer:
     """
     Used To Analyze A Variety of Pose Configurations for Defined Robots
@@ -593,11 +692,7 @@ class WorkspaceAnalyzer:
                 async_results.append(pool.apply_async(chunk_point_processing, (
                         desired_poses[small_ind:large_ind], sphere, true_rez, self.bot.robot,
                         use_jacobian, collision_detect, stl_mesh, exempt_ee, display_eta)))
-            waiter = WaitText('Running Point Detection    ')
-            while not async_results[-1].ready():
-                waiter.print()
-                time.sleep(.5)
-            waiter.done()
+            wait_for(async_results[-1], 'Running Point Detection    ')
             start_2 = time.time()
             for i in range(self.num_procs):
                 progressBar(i,
@@ -725,8 +820,7 @@ class WorkspaceAnalyzer:
                     use_jacobian=use_jacobian, collision_detect=False)
         else:
             if collision_detect:
-                collision_manager = ColliderManager()
-                collision_manager.bind(ColliderArm(self.bot, 'model'))
+                collision_manager = setup_collision_manager(self.bot)
             for i in range(num_poses):
                 progressBar(i,
                             last_iter,
@@ -737,6 +831,101 @@ class WorkspaceAnalyzer:
                         use_jacobian, collision_detect, collision_manager))
         end = time.time()
         disp(end - start, 'Elapsed')
+        return results
+
+    def _parallel_brute_manipulability_recursive_head(
+            self, thetas_prior, resolution, excluded, dof_iter, collision_detect):
+        """
+        Run brute recursive manipulability analysis in parallel.
+
+        Args:
+            thetas_prior: prior thetas (usually going to be an empty list)
+            resolution: number of positions to interpolate per point
+            excluded: list of joints to exclude from conisderation (can be empty)
+            dof_iter: current iteration of the joints of the robot to consider
+            collision_detect: Boolean to enable collision detection
+
+        Returns:
+            List: results list
+
+        """
+
+        #If the resolution is lower than number of processors, probably not worth it.
+        if resolution < self.num_procs:
+            return self.analyze_brute_manipulability_on_joints(
+                    resolution, excluded, parallel=False,
+                    collision_detect=collision_detect)
+
+        #If the end effector is excluded, we don't have to segment on it.
+        if dof_iter in excluded:
+            theta_list = [0.0] + thetas_prior
+            return self._parallel_brute_manipulability_recursive_head(
+                    theta_list, resolution, excluded, dof_iter - 1,
+                    collision_detect)
+
+        #If not, now we partition
+        joint_configurations = np.linspace(
+            self.bot.joint_mins[dof_iter],
+            self.bot.joint_maxs[dof_iter],
+            resolution)
+
+        #Determine how to evenly chunk tasks
+        start = time.time()
+        async_results = []
+        results = []
+        with mp.Pool(self.num_procs) as pool:
+            for i in range(resolution):
+                theta_i = joint_configurations[i]
+                theta_list = [theta_i] + thetas_prior
+                progressBar(i,
+                        resolution - 1,
+                        prefix='Spawning Async Tasks        ',
+                        ETA=start)
+                async_results.append(pool.apply_async(
+                    parallel_brute_manipulability_collision_head,
+                    (self.bot.robot, theta_list, resolution,
+                    excluded, dof_iter - 1, collision_detect)
+                ))
+            wait_for(async_results[-1], 'Running Brute Collection in Parallel')
+            start_2 = time.time()
+            for i in range(resolution):
+                progressBar(i,
+                        resolution - 1,
+                        prefix='Collecting Async Results',
+                        ETA=start_2)
+                results.extend(async_results[i].get(timeout=10000))
+            return results
+
+    def analyze_brute_manipulability_on_joints(self, resolution, joint_indexes,
+            parallel=False, collision_detect=False):
+        """
+        Run manipulability analysis on joints using a brute forced, FK approach
+
+        Args:
+            resolution: number of positions to interpolate per point
+            excluded: list of joints to exclude from conisderation (can be empty)
+            parallel: process in parallel as much as possible
+            collision_detect: Boolean to enable collision detection
+
+        Returns:
+            List: results list
+
+        """
+        num_dof = len(self.bot.joint_mins)
+        disp('Starting')
+        total_iters = resolution ** (num_dof - len(joint_indexes))
+        disp('Anticipated Iterations: ' + str(total_iters))
+        if parallel:
+            results = self._parallel_brute_manipulability_recursive_head(
+                [], resolution, joint_indexes, num_dof - 1, collision_detect)
+        else:
+            collision_manager = None
+            if collision_detect:
+                collision_manager = setup_collision_manager(self.bot)
+            results = brute_fk_manipulability_recursive_process(self.bot,
+                [], resolution, joint_indexes, num_dof - 1,
+                time.time(), collision_detect, collision_manager)
+        disp('complete')
         return results
 
 
@@ -942,8 +1131,7 @@ class WorkspaceAnalyzer:
         i = 0
         collision_manager = None
         if collision_detect:
-            collision_manager = ColliderManager()
-            collision_manager.bind(ColliderArm(self.bot, 'model'))
+            collision_manager = setup_collision_manager(self.bot)
         for shell in shells:
             for point in shell:
                 progressBar(i, (num_shells + 2) * points_per_shell,
@@ -1016,14 +1204,7 @@ class WorkspaceAnalyzer:
             seen_points = []
 
         if collision_detect:
-            collision_manager = ColliderManager()
-            collision_manager.bind(ColliderArm(self.bot, 'model'))
-            obstacle_manager = ColliderObstacles('object_surface')
-            obstacle_manager.addMesh('object', stl_mesh)
-            collision_manager.bind(obstacle_manager)
-            if exempt_ee:
-                collision_manager.collision_objects[0].deleteEE()
-
+            collision_manager = setup_collision_manager(self.bot, stl_mesh, exempt_ee)
 
         #Step One: Filter Out All points Beyond Maximum Reach of the Arm
         empty_results = []
@@ -1142,7 +1323,7 @@ class WorkspaceAnalyzer:
                             point_list_len - 1,
                             'Filling Trajectory      ',
                             ETA=start)
-                if i == point_list_len - 1:
+                if i == point_list_len - 1:  # Add the last point, ensuring at least one point
                     new_points.append(point_list[i])
                     continue
                 start_point = point_list[i]
@@ -1151,6 +1332,9 @@ class WorkspaceAnalyzer:
                 if distance < point_interpolation_dist:
                     continue
                 while distance > point_interpolation_dist:
+                    # Linear gap closes by directly interpolating between waypoints and scaling by
+                    #   a distance, creating a linear path.
+                    # Arc gap creates a more curved or 'arced' trajectory from waypoints A to B
                     if point_interpolation_mode == 1:
                         start_point = fsr.closeLinearGap(start_point, end_point,
                                                    point_interpolation_dist)
