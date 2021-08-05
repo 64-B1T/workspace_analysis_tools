@@ -2,8 +2,63 @@ import numpy as np
 import sys
 import pickle
 import time
+import json
 sys.path.append('..')
-from faser_math import tm
+from faser_math import fsr, tm
+
+def convert_to_json(results, json_file_name):
+    """
+    Convert a results list into a human-readable json file
+
+    Args:
+        results: Results list from workspace analyzer
+        json_file_name: filename string of desired json file
+    """
+    json_dict = {}
+    for result in results:
+        id_str = str(result[0])  # Coordinate of result
+        successes = result[2]
+        thetas = result[3]
+        json_dict[id_str] = {}
+        json_dict[id_str]['score'] = result[1]
+        json_dict[id_str]['successes'] = {}
+        for i in range(len(successes)):
+            json_dict[id_str]['successes'][str(i)] = successes[i].flatten().aslist()
+        for i in range(len(thetas)):
+            json_dict[id_str]['thetas'][str(i)] = thetas[i].flatten().aslist()
+        with open(json_file_name, 'w') as json_file:
+            json.dump(json_dict, json_file)
+
+def convert_from_json(json_file_name):
+    """Short summary.
+
+    Args:
+        json_file_name: Description of parameter `json_file_name`.
+
+    Returns:
+        type: Description of returned object.
+
+    """
+    with open(json_file_name, 'r') as json_file:
+        data = json.load(json_file)
+
+    results = []
+    for item in data:
+        result = []
+        result.append(tm(item))
+        result.append(data[item]['score'])
+        successes = []
+        thetas = []
+        for success in data[item]['successes']:
+            successes.append(tm(data[item['successes'][success]]))
+        for theta in data[item]['thetas']:
+            thetas.append(np.array(data[item]['thetas'][theta]))
+        result.append(successes)
+        result.append(thetas)
+        results.append(result)
+    return results
+
+
 
 def score_point(score):
     """
@@ -34,6 +89,47 @@ def score_point(score):
     elif score > .1:
         col = 'red'
     return col
+
+def complete_trajectory(point_list, point_interpolation_dist, point_interpolation_mode):
+    """
+    Interpolate a given trajectory to user specifications (IK)
+
+    Args:
+        point_list: List of waypoints that comprise the trajectory
+        point_interpolation_dist: maximum distance apart to place interpolated points
+        point_interpolation_mode: type of interpolation to perform
+
+    Returns:
+        [tm]: list of transformation objects
+
+    """
+    if point_interpolation_dist > 0:
+        new_points = []
+        point_list_len = len(point_list)
+        start = time.time()
+        for i in range(point_list_len):
+            if i == point_list_len - 1:  # Add the last point, ensuring at least one point
+                new_points.append(point_list[i])
+                continue
+            start_point = point_list[i]
+            end_point = point_list[i + 1]
+            distance = fsr.arcDistance(start_point, end_point)
+            if distance < point_interpolation_dist:
+                continue
+            while distance > point_interpolation_dist:
+                # Linear gap closes by directly interpolating between waypoints and scaling by
+                #   a distance, creating a linear path.
+                # Arc gap creates a more curved or 'arced' trajectory from waypoints A to B
+                if point_interpolation_mode == 1:
+                    start_point = fsr.closeLinearGap(start_point, end_point,
+                                               point_interpolation_dist)
+                else:
+                    start_point = fsr.closeArcGap(start_point, end_point,
+                                             point_interpolation_dist)
+                distance = fsr.arcDistance(start_point, end_point)
+                new_points.append(start_point)
+        point_list = new_points
+    return point_list
 
 def load_point_cloud_from_file(fname):
     """

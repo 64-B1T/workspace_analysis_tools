@@ -11,7 +11,7 @@ import time
 
 #This module imports
 from alpha_shape import AlphaShape
-from workspace_helper_functions import WaitText, wait_for
+from workspace_helper_functions import WaitText, wait_for, complete_trajectory
 
 # Other module imports
 sys.path.append('../')
@@ -1301,6 +1301,95 @@ class WorkspaceAnalyzer:
         return self.analyze_task_space_manipulability(point_cloud,
                 manip_resolution, parallel, use_jacobian, collision_detect)
 
+    def analyze_manipulability_point_cloud_with_trajectory(self, point_cloud, trajectory_list,
+        manip_resolution, point_interpolation_dist=-1, manipulability_mode=True,
+        point_interpolation_mode=1, collision_detect=False, parallel=False):
+        """
+        Analyze manipulability on a point cloud with trajectory applied to each point.
+        Make sure that the initial points are oriented correctly for the analysis to work.
+
+        Args:
+            point_cloud: Point cloud (perhaps representing the surface of an object)
+            trajectory_list: the local waypoints that make up a trajectory (such as withdrawing)
+            manip_resolution: manipulation resultion of a unit sphere
+            point_interpolation_dist: maximum distance between interpolated points in a trajectory
+            manipulability_mode: whether or not to use jacobian or unit sphere manipulabilitity
+            point_interpolation_mode: Whether or not to use arc interpolation
+            collision_detect: Whether or not to use collision detection
+            parallel: Whether or not to evaluate in parallel
+
+        Returns:
+            List: Results List for trajectory analysis
+
+        """
+
+        print('Interpolating Trajectory As Required')
+        trajectory_list = complete_trajectory(
+            trajectory_list, point_interpolation_dist, point_interpolation_mode)
+
+        print('Preprocessing requested local trajectory')
+        trajectory_cloud = []
+
+        for point in point_cloud:
+            local_trajectory = []
+            for traj_point in trajectory_list:
+                local_trajectory.append(fsr.globalToLocal(point, traj_point))
+            trajectory_cloud.append(local_trajectory)
+
+        complete_results = []
+        #It's probably better to handle parallelism on a surface level here
+        if parallel:
+            async_results = []
+            chunk_sz = len(trajectory_cloud) // self.num_procs
+            with mp.Pool(self.num_procs) as pool:
+                start = time.time()
+                for i in range(self.num_procs):
+                    progressBar(i,
+                            self.num_procs - 1,
+                            prefix='Spawning Async Tasks        ',
+                            ETA=start)
+                    display_eta = i == (self.num_procs - 1)
+                    small_ind = i * chunk_sz
+                    large_ind = (i + 1) * chunk_sz
+                    if display_eta:
+                        large_ind = len(trajectory_cloud)
+                    async_results.append(pool.apply_async(self.analyze_task_space_manipulability, (
+                            trajectory_cloud[small_ind:large_ind], manip_resolution, False,
+                            manipulability_mode, collision_detect
+                    )))
+                wait_for(async_results[-1], 'Running Task Manipulability')
+                start_2 = time.time()
+                results = []
+                for i in range(self.num_procs):
+                    progressBar(i,
+                            self.num_procs - 1,
+                            prefix='Collecting Async Results',
+                            ETA=start_2)
+                    results.extend(async_results[i].get(timeout=5*len(trajectory_cloud)))
+
+        else:
+            for trajectory in trajectory_cloud:
+                #Evaluate the trajectory
+                trajectory_result = self.analyze_task_space_manipulability(trajectory,
+                        manip_resolution, parallel, manipulability_mode, collision_detect)
+
+                #Process Trajectory Result to collect metadata
+                results.append(trajectory_result)
+
+        print('Post-Processing Collected Data')
+        for trajectory_result in results:
+            valid = True
+            score_average = 1.0
+            for res in trajectory_result:
+                if res[1] == 0:
+                    valid = False
+                score_average += res[1]
+            score_average = score_average / len(trajectory_result)
+
+            complete_results.append([valid, score_average, trajectory_result])
+
+        return complete_results
+
     def analyze_manipulability_over_trajectory(self,
                                                point_list,
                                                manipulability_mode=1,
@@ -1329,36 +1418,8 @@ class WorkspaceAnalyzer:
         """
 
         #Step One: Flesh out the point list if necessary
-        if point_interpolation_dist > 0:
-            new_points = []
-            point_list_len = len(point_list)
-            start = time.time()
-            for i in range(point_list_len):
-                progressBar(i,
-                            point_list_len - 1,
-                            'Filling Trajectory      ',
-                            ETA=start)
-                if i == point_list_len - 1:  # Add the last point, ensuring at least one point
-                    new_points.append(point_list[i])
-                    continue
-                start_point = point_list[i]
-                end_point = point_list[i + 1]
-                distance = fsr.arcDistance(start_point, end_point)
-                if distance < point_interpolation_dist:
-                    continue
-                while distance > point_interpolation_dist:
-                    # Linear gap closes by directly interpolating between waypoints and scaling by
-                    #   a distance, creating a linear path.
-                    # Arc gap creates a more curved or 'arced' trajectory from waypoints A to B
-                    if point_interpolation_mode == 1:
-                        start_point = fsr.closeLinearGap(start_point, end_point,
-                                                   point_interpolation_dist)
-                    else:
-                        start_point = fsr.closeArcGap(start_point, end_point,
-                                                 point_interpolation_dist)
-                    distance = fsr.arcDistance(start_point, end_point)
-                    new_points.append(start_point)
-            point_list = new_points
+        point_list = complete_trajectory(
+                point_list, point_interpolation_dist, point_interpolation_mode)
 
         #Step Two: Determine Manipulability Function
         results = self.analyze_task_space_manipulability(point_list,
