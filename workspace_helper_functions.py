@@ -6,6 +6,25 @@ import json
 sys.path.append('..')
 from faser_math import fsr, tm
 
+def filter_manipulability_at_threshold(results, score_threshold=0.5):
+    """
+    Filter Manipulability At THreshold
+    (See only the parts of a workspace that have desired manipulability)
+
+    Args:
+        results: a pre-existing results list, generated from an earlier calculation
+        score_threshold: desired threshold to filter above (e.g .75 = above 75% range 0-1)
+
+    Returns:
+        type: Truncated Results List
+
+    """
+    filtered_results = []
+    for result in results:
+        if result[1] > score_threshold:  # Should be range 0-1
+            filtered_results.append(result)
+    return filtered_results
+
 def convert_to_json(results, json_file_name):
     """
     Convert a results list into a human-readable json file

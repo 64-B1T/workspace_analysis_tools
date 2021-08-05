@@ -655,7 +655,7 @@ def brute_fk_manipulability_recursive_process(bot, thetas_prior,
                         theta_list, resolution, excluded,
                         dof_iter - 1, start,
                         collision_detect, collision_manager))
-    return success_list
+    return success_list    
 
 class WorkspaceAnalyzer:
     """
