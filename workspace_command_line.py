@@ -131,6 +131,10 @@ cmd_flag_jac_angular = '-angular'
 #Brute Manipulability Joints Flags
 cmd_flag_brute_excluded = '-exclude'
 
+#Trajectory point cloud flags
+cmd_flag_point_traj_cloud = '-pointCloud'
+cmd_flag_point_traj_trajectory = '-trajectory'
+
 class CommandExecutor:
     """Superclass for workspace command line, to enable use in other applications more easily"""
 
@@ -787,6 +791,54 @@ class CommandExecutor:
                 col = score_point(score)
                 ax.scatter3D(r[0][0], r[0][1], r[0][2], s=1, color=col)
             plt.show()
+
+    def cmd_analyze_point_cloud_with_trajectory(self, cmds):
+        point_list = []
+        point_interpolation_dist = -1
+        point_interpolation_mode = 1
+        manipulability_mode = 1
+        manip_resolution = 25
+        plot = False
+        parallel = False
+
+        if cmd_flag_point_traj_cloud not in cmds:
+            disp('A point cloud file is required')
+            return
+        else:
+            point_list = load_point_cloud_from_file(post_flag(cmd_flag_point_traj_cloud, cmds))
+        if cmd_flag_point_traj_trajectory not in cmds:
+            disp('A trajectory cloud file is required')
+            return
+        else:
+            trajectory = load_point_cloud_from_file(post_flag(cmd_flag_point_traj_trajectory, cmds))
+        if cmd_flag_trajectory_interpolation in cmds:
+            point_interpolation_dist = float(post_flag(cmd_flag_trajectory_interpolation, cmds))
+        if cmd_flag_manip_res in cmds:
+            manip_resolution = int(post_flag(cmd_flag_manip_res, cmds))
+        if cmd_flag_trajectory_arc_interp in cmds:
+            point_interpolation_mode = 2
+        if cmd_flag_trajectory_unit_manip in cmds:
+            manipulability_mode = 2
+        parallel = cmd_flag_parallel in cmds
+        collision_detect = cmd_flag_collision_detect in cmds
+
+        results = self.analyzer.analyze_manipulability_point_cloud_with_trajectory(
+            point_list, trajectory,
+            manip_resolution, point_interpolation_dist, manipulability_mode,
+            point_interpolation_mode, collision_detect, parallel)
+
+        save_output, out_file_name = self.save_results_flag(cmds)
+        plot = cmd_flag_plot_results in cmds
+        if plot:
+            plt.figure()
+            ax = plt.axes(projection='3d')
+            for traj in results:
+                for r in traj:
+                    DrawAxes(r[0], r[1] / 2, ax)
+                    ax.scatter3D(r[0][0], r[0][1], r[0][2], c=score_point(r[1]), s=25)
+                plt.show()
+        if save_output:
+            self.save_to_file(results, out_file_name)
 
     def cmd_start_sequence(self):
         """

@@ -1320,7 +1320,6 @@ class WorkspaceAnalyzer:
 
         Returns:
             List: Results List for trajectory analysis
-
         """
 
         print('Interpolating Trajectory As Required')
