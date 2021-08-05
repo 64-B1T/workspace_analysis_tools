@@ -793,6 +793,19 @@ class CommandExecutor:
             plt.show()
 
     def cmd_analyze_point_cloud_with_trajectory(self, cmds):
+        """
+        Analyze the effects of a trajectory on a set of points, useful for
+        determining whether or not objects can be removed from a surface or something similar
+
+        -pointCloud: the point cloud used as the origin of trajectories
+        -trajectory: the local trajectory applied to each point
+        -o: optional output file for saving results
+        -unitSphereManipulability: use unit sphere manipulability instead of jacobian manipulability
+        -manipResolution: desired manipulation resolution (number of unit sphere points) Default 25
+        -interpolationDist: interpolate between points in unit trajectory by a given amount (meters)
+        -arcInterpolation: use arc interpolation instead of linear interpolation
+        -plot: displays a basic plot of the results
+        """
         point_list = []
         point_interpolation_dist = -1
         point_interpolation_mode = 1
