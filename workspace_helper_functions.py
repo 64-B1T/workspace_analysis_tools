@@ -211,7 +211,7 @@ def wait_for(result, message):
         message: message to display while waiting
     """
     waiter = WaitText(message)
-    while not result.read():
+    while not result.ready():
         waiter.print()
         time.sleep(0.5)
     waiter.done()

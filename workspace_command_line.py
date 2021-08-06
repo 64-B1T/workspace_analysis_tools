@@ -46,6 +46,7 @@ cmd_str_analyze_unit_shell_manipulability = 'unitShellManipulability'
 cmd_str_analyze_manipulability_object_surface = 'objectSurfaceManipulability'
 cmd_str_manipulability_within_volume = 'manipulabilityWithinVolume'
 cmd_str_manipulability_over_trajectory = 'manipulabilityOverTrajectory'
+cmd_str_manipulability_over_trajectory_cloud = 'manipulabilityFromCloudTrajectory'
 cmd_str_view_manipulability_space = 'viewManipulabilitySpace'
 cmd_str_brute_manipulability = 'analyzeBruteManipulability'
 cmd_str_analyze_force_norm = 'analyzeForceNorm'
@@ -67,6 +68,7 @@ valid_commands = [
     cmd_str_analyze_total_workspace_alpha,
     cmd_str_analyze_unit_shell_manipulability,
     cmd_str_analyze_manipulability_object_surface,
+    cmd_str_manipulability_over_trajectory_cloud,
     cmd_str_brute_manipulability,
     cmd_str_manipulability_within_volume,
     cmd_str_manipulability_over_trajectory,
@@ -846,10 +848,10 @@ class CommandExecutor:
             plt.figure()
             ax = plt.axes(projection='3d')
             for traj in results:
-                for r in traj:
+                for r in traj[2]:
                     DrawAxes(r[0], r[1] / 2, ax)
                     ax.scatter3D(r[0][0], r[0][1], r[0][2], c=score_point(r[1]), s=25)
-                plt.show()
+            plt.show()
         if save_output:
             self.save_to_file(results, out_file_name)
 
@@ -924,6 +926,8 @@ class CommandExecutor:
             return self.cmd_view_manipulability_space(cmds_parsed)
         elif cmds_parsed[0] == cmd_str_brute_manipulability:
             return self.cmd_analyze_brute_manipulability(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_manipulability_over_trajectory_cloud:
+            return self.cmd_analyze_point_cloud_with_trajectory(cmds_parsed)
 
 
 class WorkspaceCommandLine(CommandExecutor):
@@ -1050,6 +1054,8 @@ class WorkspaceCommandLine(CommandExecutor):
                 disp(self.cmd_analyze_manipulability_within_volume.__doc__)
             elif cmds[1] == cmd_str_manipulability_over_trajectory:
                 disp(self.cmd_analyze_manipulability_over_trajectory.__doc__)
+            elif cmds[1] == cmd_str_manipulability_over_trajectory_cloud:
+                disp(self.cmd_analyze_point_cloud_with_trajectory.__doc__)
             elif cmds[1] == cmd_str_schedule_sequence:
                 disp(self.cmd_schedule_sequence.__doc__)
             elif cmds[1] == cmd_str_start_sequence:

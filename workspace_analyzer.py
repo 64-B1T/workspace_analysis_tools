@@ -1336,12 +1336,16 @@ class WorkspaceAnalyzer:
             trajectory_cloud.append(local_trajectory)
 
         complete_results = []
+        results = []
         #It's probably better to handle parallelism on a surface level here
         if parallel:
             async_results = []
             chunk_sz = len(trajectory_cloud) // self.num_procs
             with mp.Pool(self.num_procs) as pool:
                 start = time.time()
+                results = []
+
+                sphere, true_rez = gen_manip_sphere(manip_resolution)
                 for i in range(self.num_procs):
                     progressBar(i,
                             self.num_procs - 1,
@@ -1352,19 +1356,19 @@ class WorkspaceAnalyzer:
                     large_ind = (i + 1) * chunk_sz
                     if display_eta:
                         large_ind = len(trajectory_cloud)
-                    async_results.append(pool.apply_async(self.analyze_task_space_manipulability, (
-                            trajectory_cloud[small_ind:large_ind], manip_resolution, False,
-                            manipulability_mode, collision_detect
-                    )))
+                    for t in trajectory_cloud[small_ind:large_ind]:
+                        async_results.append(pool.apply_async(chunk_point_processing, (
+                                t, sphere, true_rez, self.bot.robot,
+                                manipulability_mode, collision_detect
+                                )))
                 wait_for(async_results[-1], 'Running Task Manipulability')
                 start_2 = time.time()
-                results = []
-                for i in range(self.num_procs):
+                for i in range(len(async_results)):
                     progressBar(i,
-                            self.num_procs - 1,
+                            len(async_results)-1,
                             prefix='Collecting Async Results',
                             ETA=start_2)
-                    results.extend(async_results[i].get(timeout=5*len(trajectory_cloud)))
+                    results.append(async_results[i].get(timeout=5*len(trajectory_cloud)))
 
         else:
             for trajectory in trajectory_cloud:
