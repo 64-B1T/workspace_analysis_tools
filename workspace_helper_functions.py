@@ -17,7 +17,6 @@ def filter_manipulability_at_threshold(results, score_threshold=0.5):
 
     Returns:
         type: Truncated Results List
-
     """
     filtered_results = []
     for result in results:
@@ -49,14 +48,14 @@ def convert_to_json(results, json_file_name):
             json.dump(json_dict, json_file)
 
 def convert_from_json(json_file_name):
-    """Short summary.
+    """
+    Convert results from a json file into something useable
 
     Args:
-        json_file_name: Description of parameter `json_file_name`.
+        json_file_name: json file name containing results
 
     Returns:
-        type: Description of returned object.
-
+        list: results as loaded from JSON
     """
     with open(json_file_name, 'r') as json_file:
         data = json.load(json_file)
@@ -120,7 +119,6 @@ def complete_trajectory(point_list, point_interpolation_dist, point_interpolatio
 
     Returns:
         [tm]: list of transformation objects
-
     """
     if point_interpolation_dist > 0:
         new_points = []
@@ -207,6 +205,7 @@ def sort_cloud(cloud):
 def wait_for(result, message):
     """
     Wait for an asynchronous result to complete proessing and also display a waiting message
+
     Args:
         result: asynchronous result
         message: message to display while waiting

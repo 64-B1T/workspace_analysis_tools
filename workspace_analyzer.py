@@ -114,7 +114,7 @@ def grid_cloud_within_volume(shape, resolution=.25):
     cloud_list = list(itertools.product(*[x_space, y_space, z_space]))
     cloud = np.array(cloud_list)
 
-    #Prune Cloud by erasing points known to be outsid ethe volume of the alpha shape
+    #Prune Cloud by erasing points known to be outside the volume of the alpha shape
     print('Initial Coud Size:' + str(len(cloud)))
     pruned_cloud = inside_alpha_shape(shape, cloud)
     print('Pruned Cloud Size:' + str(len(pruned_cloud)))
@@ -132,7 +132,7 @@ def moller_trumbore_ray_intersection(origin_point,
     Returns:
         Boolean for whether or not the ray intersects the triangle
     """
-    # Algorith sourced from
+    # Algorithm sourced from
     # https://en.wikipedia.org/wiki/M%C3%B6ller%E2%80%93Trumbore_intersection_algorithm
     vec_0 = triangle[0]
     vec_1 = triangle[1]
@@ -184,7 +184,7 @@ def moller_trumbore_ray_intersection_array(points,
     vec_2 = triangle[2]
     alen = len(points)
 
-    if alen == 3: #If there is only one point, do the regular ray intersection algorithm
+    if alen == 3:  # If there is only one point, do the regular ray intersection algorithm
         return moller_trumbore_ray_intersection(points, triangle)
 
     edge_1 = vec_1 - vec_0
@@ -655,7 +655,7 @@ def brute_fk_manipulability_recursive_process(bot, thetas_prior,
                         theta_list, resolution, excluded,
                         dof_iter - 1, start,
                         collision_detect, collision_manager))
-    return success_list    
+    return success_list
 
 class WorkspaceAnalyzer:
     """

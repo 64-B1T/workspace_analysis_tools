@@ -65,6 +65,7 @@ class AlphaShape:
     def process_triangles(self):
         """
         Calculate traingles within vertices, creating a useable list
+
         Returns:
             List: triangles (list containing three points)
         """
@@ -76,6 +77,7 @@ class AlphaShape:
     def calculate_bounds(self):
         """
         Calculate the X, Y, and Z bounds of the resultant alpha shape
+        
         Returns:
             [[],[],[]]: X, Y, and Z bounds arranged by dimension, min and then max
         """
