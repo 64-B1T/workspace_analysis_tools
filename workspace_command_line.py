@@ -46,6 +46,7 @@ cmd_str_analyze_unit_shell_manipulability = 'unitShellManipulability'
 cmd_str_analyze_manipulability_object_surface = 'objectSurfaceManipulability'
 cmd_str_manipulability_within_volume = 'manipulabilityWithinVolume'
 cmd_str_manipulability_over_trajectory = 'manipulabilityOverTrajectory'
+cmd_str_manipulability_over_trajectory_cloud = 'manipulabilityFromCloudTrajectory'
 cmd_str_view_manipulability_space = 'viewManipulabilitySpace'
 cmd_str_brute_manipulability = 'analyzeBruteManipulability'
 cmd_str_analyze_force_norm = 'analyzeForceNorm'
@@ -67,6 +68,7 @@ valid_commands = [
     cmd_str_analyze_total_workspace_alpha,
     cmd_str_analyze_unit_shell_manipulability,
     cmd_str_analyze_manipulability_object_surface,
+    cmd_str_manipulability_over_trajectory_cloud,
     cmd_str_brute_manipulability,
     cmd_str_manipulability_within_volume,
     cmd_str_manipulability_over_trajectory,
@@ -130,6 +132,10 @@ cmd_flag_jac_angular = '-angular'
 
 #Brute Manipulability Joints Flags
 cmd_flag_brute_excluded = '-exclude'
+
+#Trajectory point cloud flags
+cmd_flag_point_traj_cloud = '-pointCloud'
+cmd_flag_point_traj_trajectory = '-trajectory'
 
 class CommandExecutor:
     """Superclass for workspace command line, to enable use in other applications more easily"""
@@ -672,16 +678,16 @@ class CommandExecutor:
         Returns:
             list: target values related to givens
         """
-        targetNorm = 0
+        target_norm = 0
         if cmd_flag_input_file in cmds:
             object_file_name = post_flag(cmd_flag_input_file, cmds)
         if cmd_flag_jac_norm in cmds:
-            targetNorm = float(post_flag(cmd_flag_jac_norm))
+            target_norm = float(post_flag(cmd_flag_jac_norm))
         angular = cmd_flag_jac_angular in cmds
         with open(object_file_name, 'rb') as fp:
             data = pickle.load(fp)
         results = self.analyzer.analyze_joint_related_to_end_effector_vals(
-                data, targetNorm, angular)
+                data, target_norm, angular)
         save_output, out_file_name = self.save_results_flag(cmds)
         if save_output:
             self.save_to_file(results, out_file_name)
@@ -788,6 +794,67 @@ class CommandExecutor:
                 ax.scatter3D(r[0][0], r[0][1], r[0][2], s=1, color=col)
             plt.show()
 
+    def cmd_analyze_point_cloud_with_trajectory(self, cmds):
+        """
+        Analyze the effects of a trajectory on a set of points, useful for
+        determining whether or not objects can be removed from a surface or something similar
+
+        -pointCloud: the point cloud used as the origin of trajectories
+        -trajectory: the local trajectory applied to each point
+        -o: optional output file for saving results
+        -unitSphereManipulability: use unit sphere manipulability instead of jacobian manipulability
+        -manipResolution: desired manipulation resolution (number of unit sphere points) Default 25
+        -interpolationDist: interpolate between points in unit trajectory by a given amount (meters)
+        -arcInterpolation: use arc interpolation instead of linear interpolation
+        -plot: displays a basic plot of the results
+        """
+        point_list = []
+        point_interpolation_dist = -1
+        point_interpolation_mode = 1
+        manipulability_mode = 1
+        manip_resolution = 25
+        plot = False
+        parallel = False
+
+        if cmd_flag_point_traj_cloud not in cmds:
+            disp('A point cloud file is required')
+            return
+        else:
+            point_list = load_point_cloud_from_file(post_flag(cmd_flag_point_traj_cloud, cmds))
+        if cmd_flag_point_traj_trajectory not in cmds:
+            disp('A trajectory cloud file is required')
+            return
+        else:
+            trajectory = load_point_cloud_from_file(post_flag(cmd_flag_point_traj_trajectory, cmds))
+        if cmd_flag_trajectory_interpolation in cmds:
+            point_interpolation_dist = float(post_flag(cmd_flag_trajectory_interpolation, cmds))
+        if cmd_flag_manip_res in cmds:
+            manip_resolution = int(post_flag(cmd_flag_manip_res, cmds))
+        if cmd_flag_trajectory_arc_interp in cmds:
+            point_interpolation_mode = 2
+        if cmd_flag_trajectory_unit_manip in cmds:
+            manipulability_mode = 2
+        parallel = cmd_flag_parallel in cmds
+        collision_detect = cmd_flag_collision_detect in cmds
+
+        results = self.analyzer.analyze_manipulability_point_cloud_with_trajectory(
+            point_list, trajectory,
+            manip_resolution, point_interpolation_dist, manipulability_mode,
+            point_interpolation_mode, collision_detect, parallel)
+
+        save_output, out_file_name = self.save_results_flag(cmds)
+        plot = cmd_flag_plot_results in cmds
+        if plot:
+            plt.figure()
+            ax = plt.axes(projection='3d')
+            for traj in results:
+                for r in traj[2]:
+                    DrawAxes(r[0], r[1] / 2, ax)
+                    ax.scatter3D(r[0][0], r[0][1], r[0][2], c=score_point(r[1]), s=25)
+            plt.show()
+        if save_output:
+            self.save_to_file(results, out_file_name)
+
     def cmd_start_sequence(self):
         """
         Starts or repeats a sequence of commands
@@ -859,6 +926,8 @@ class CommandExecutor:
             return self.cmd_view_manipulability_space(cmds_parsed)
         elif cmds_parsed[0] == cmd_str_brute_manipulability:
             return self.cmd_analyze_brute_manipulability(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_manipulability_over_trajectory_cloud:
+            return self.cmd_analyze_point_cloud_with_trajectory(cmds_parsed)
 
 
 class WorkspaceCommandLine(CommandExecutor):
@@ -985,6 +1054,8 @@ class WorkspaceCommandLine(CommandExecutor):
                 disp(self.cmd_analyze_manipulability_within_volume.__doc__)
             elif cmds[1] == cmd_str_manipulability_over_trajectory:
                 disp(self.cmd_analyze_manipulability_over_trajectory.__doc__)
+            elif cmds[1] == cmd_str_manipulability_over_trajectory_cloud:
+                disp(self.cmd_analyze_point_cloud_with_trajectory.__doc__)
             elif cmds[1] == cmd_str_schedule_sequence:
                 disp(self.cmd_schedule_sequence.__doc__)
             elif cmds[1] == cmd_str_start_sequence:

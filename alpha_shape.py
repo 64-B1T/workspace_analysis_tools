@@ -1,32 +1,50 @@
-from scipy.spatial import Delaunay
-import numpy as np
-from collections import defaultdict
 import alphashape
+from collections import defaultdict
+import numpy as np
+from scipy.spatial import Delaunay
+
 
 
 class AlphaShape:
     """Calculate an alpha shape from a set of points."""
 
     def __init__(self, pos, alpha=None, mode=0):
+        """
+        Build an alpha shape conforming to required specifications.
+
+        Args:
+            pos: points to create the shape out of
+            alpha: Optional alpha parameter
+            mode: mode select switch for alpha shape backend
+
+        Returns:
+            AlphaShape: alpha shape of requeted point cloud
+        """
         shape = None
         if mode == 1:
-            verts, edges, triangles = alpha_shape_3d(pos, 1/1.98)
+            # if Mode 1, use library-less solution, less polished, slightly faster
+            if alpha is not None:
+                verts, edges, triangles = alpha_shape_3d(pos, 1 / alpha)
+            else:
+                verts, edges, triangles = alpha_shape_3d(pos, 1 / 1.98)
+                #Default alpha value of 1.98 chosen for convenience
             self.verts = np.array(pos)[verts, :]
-            # self.verts = verts
             self.pos = pos
             self.edges = edges
             triangles = []
             for t in triangles:
-                triangles.append(np.array(pos)[t])
+                triangles.append(np.array(pos)[t])  # Extract triangles from moller trumbore
             self.triangles = triangles
             self.triangle_inds = triangles
-            # self.triangles = self.process_triangles()
-            # self.triangles = triangles
+
         else:
+            # if mode 0 (Default) use the regular alphashape library
             if alpha is not None:
-                shape = alphashape.alphashape(pos, alpha)
+                shape = alphashape.alphashape(pos, alpha)  # Manually Specify Alpha Value
             else:
-                shape = alphashape.alphashape(pos)
+                shape = alphashape.alphashape(pos)  # Automatically determine Alpha Value
+                # Warning: Automatic determination of alpha values is extremely slow for complex
+                #   shapes consisting of many points
             self.alpha = alpha
             self.verts = shape.vertices
             self.edges = None
@@ -34,25 +52,35 @@ class AlphaShape:
             self.triangles = self.process_triangles()
         self.bounds = self.calculate_bounds()
 
-    def draw(self, ax):
+    def draw(self, ax, transparency=0.2):
         """
         Draws the Alpha Shape.
-
         Args:
             ax: matplotlib axis to plot on
+            transparency: optional parameter for transparency of resultant plot
         """
         ax.plot_trisurf(*zip(*self.verts),
-                        triangles=self.triangle_inds, alpha=.2, edgecolor='black')
+                        triangles=self.triangle_inds, alpha=transparency, edgecolor='black')
 
     def process_triangles(self):
-        """Calculate triangle vertices."""
+        """
+        Calculate traingles within vertices, creating a useable list
+
+        Returns:
+            List: triangles (list containing three points)
+        """
         triangles = []
         for tri in self.triangle_inds:
             triangles.append(self.verts[tri])
         return triangles
 
     def calculate_bounds(self):
-        """Calculate bounds."""
+        """
+        Calculate the X, Y, and Z bounds of the resultant alpha shape
+        
+        Returns:
+            [[],[],[]]: X, Y, and Z bounds arranged by dimension, min and then max
+        """
         bounds_x = [np.Inf, -np.Inf]
         bounds_y = [np.Inf, -np.Inf]
         bounds_z = [np.Inf, -np.Inf]
@@ -108,7 +136,6 @@ def alpha_shape_3d(pos, alpha):
         triangles_dict[tuple(tri)] += 1
     triangles = np.array([tri for tri in triangles_dict if triangles_dict[tri] == 1])
     # edges
-    print(triangles)
     edge_comb = np.array([(0, 1), (0, 2), (1, 2)])
     edges = triangles[:, edge_comb].reshape(-1, 2)
     edges = np.sort(edges, axis=1)

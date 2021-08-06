@@ -11,7 +11,7 @@ import time
 
 #This module imports
 from alpha_shape import AlphaShape
-from workspace_helper_functions import WaitText
+from workspace_helper_functions import WaitText, wait_for, complete_trajectory
 
 # Other module imports
 sys.path.append('../')
@@ -20,7 +20,7 @@ from faser_math import tm, fsr
 from faser_utils.disp.disp import disp, progressBar
 
 
-#Constant Values
+# Constant Values
 EPSILON = .000001  # Deviation Acceptable for Moller Trumbore
 RAY_UNIT = 10  # Unit Vector Constant in Moller Trumbore. Arbitrary
 MAX_DIST = 10  # Maximum distance from robot base to discount points in object surface
@@ -44,18 +44,6 @@ ALPHA_VALUE = 1.2
 
 
 # Helper Functions That You Probably Shouldn't Need To Call Directly
-def wait_for(result, message):
-    """
-    Wait for an asynchronous result to complete proessing and also display a waiting message
-    Args:
-        result: asynchronous result
-        message: message to display while waiting
-    """
-    waiter = WaitText(message)
-    while not result.read():
-        waiter.print()
-        time.sleep(0.5)
-    waiter.done()
 
 def ignore_close_points(seen_points, empty_results, test_point, minimum_dist):
     """
@@ -72,6 +60,7 @@ def ignore_close_points(seen_points, empty_results, test_point, minimum_dist):
 
     """
     continuance = False
+    #If we're ignoring the point, we do need to supply an empty result to not break later analysis
     for point in seen_points:
         if fsr.distance(point, test_point) < minimum_dist:
             empty_results.append(process_empty(test_point))
@@ -110,7 +99,8 @@ def grid_cloud_within_volume(shape, resolution=.25):
     def round_near(x, a):
         return math.floor(x / a) * a
 
-    def gen_lin(bounds):
+    def gen_lin(bounds):  # Generate a linearly interpolated grid between minimum and maximum
+        # Bounds for the purposes of setting up a 3D grid
         min_t = -round_near(abs(bounds[0]), resolution)
         max_t = round_near(bounds[1], resolution)
         step = (max_t - min_t) / resolution
@@ -120,13 +110,11 @@ def grid_cloud_within_volume(shape, resolution=.25):
     y_space = gen_lin(bounds_y).tolist()
     z_space = gen_lin(bounds_z).tolist()
 
-    #Construct point cloud
-    #cloud_list = [[]]
+    # Construct point cloud by matching every combination of the created points
     cloud_list = list(itertools.product(*[x_space, y_space, z_space]))
-
     cloud = np.array(cloud_list)
 
-    #Prune Cloud
+    #Prune Cloud by erasing points known to be outside the volume of the alpha shape
     print('Initial Coud Size:' + str(len(cloud)))
     pruned_cloud = inside_alpha_shape(shape, cloud)
     print('Pruned Cloud Size:' + str(len(pruned_cloud)))
@@ -144,27 +132,32 @@ def moller_trumbore_ray_intersection(origin_point,
     Returns:
         Boolean for whether or not the ray intersects the triangle
     """
+    # Algorithm sourced from
     # https://en.wikipedia.org/wiki/M%C3%B6ller%E2%80%93Trumbore_intersection_algorithm
     vec_0 = triangle[0]
     vec_1 = triangle[1]
     vec_2 = triangle[2]
+
     ray = np.array(ray_dir)
     edge_1 = vec_1 - vec_0
     edge_2 = vec_2 - vec_0
+
     h = np.cross(ray, edge_2)
     a = np.dot(edge_1, h)
-    # if (a > -EPSILON and a < EPSILON):
     if -EPSILON < a < EPSILON:
         return False  # Ray parallel to triangle
+
     f = 1.0 / a
     s = origin_point - vec_0
     u = f * (np.dot(s, h))
     if u < 0.0 or u > 1.0:
         return False
+
     q = np.cross(s, edge_1)
     v = f * np.dot(ray, q)
     if v < 0.0 or (u + v) > 1.0:
         return False
+
     t = f * np.dot(edge_2, q)
     if t > EPSILON:
         return True
@@ -185,32 +178,29 @@ def moller_trumbore_ray_intersection_array(points,
         Numpy array of booleans for which corresponding points intersect the
             triangle
     """
+    # Determine the vectors that make up the triangle to test
     vec_0 = triangle[0]
     vec_1 = triangle[1]
     vec_2 = triangle[2]
     alen = len(points)
-    #print("Length: " + str(alen))
-    if alen == 3:
+
+    if alen == 3:  # If there is only one point, do the regular ray intersection algorithm
         return moller_trumbore_ray_intersection(points, triangle)
 
     edge_1 = vec_1 - vec_0
     edge_2 = vec_2 - vec_0
-
     h = np.cross(ray, edge_2)
     a = np.dot(edge_1, h)
 
     if -EPSILON < a < EPSILON:
-        return np.array([False] * alen)  # Ray is parallel to triangle
+        return np.array([False] * alen)  # Ray is parallel to triangle so intersects
 
     # Here it becomes Matrix Ops
     f = 1.0 / a
-
     res = np.array([True] * alen)
     s = points - vec_0
-
     u = f * np.dot(s, h)
 
-    #print(len(u))
     res[np.where(u < 0.0)] = False
     res[np.where(u > 1.0)] = False
 
@@ -241,7 +231,6 @@ def chunk_moller_trumbore(test_points, triangles, epsilon_vector, result_array):
         res = moller_trumbore_ray_intersection_array(test_points,
                                                      triangles[i, :],
                                                      epsilon_vector)
-        # where res == True
         result_array[np.where(res)] += 1
     return result_array
 
@@ -284,6 +273,7 @@ def inside_alpha_shape(shape, points, check_bounds=True):
 
     inside_alpha = []
     if check_bounds:
+        #Before we start moller_trumbore, eliminate any points that are outside of the known bounds
         num_points = len(points)
         i = 0
         for point in points:
@@ -292,11 +282,13 @@ def inside_alpha_shape(shape, points, check_bounds=True):
             if (point[0] < bounds[0][0] or point[0] > bounds[0][1]
                     or point[1] < bounds[1][0] or point[1] > bounds[1][1]
                     or point[2] < bounds[2][0] or point[2] > bounds[2][1]):
+                # Erasure by continuing
                 continue
             else:
                 inside_alpha.append(point)
         inside_alpha = np.array(inside_alpha)
     else:
+        # If didn't opt to check bounds, the target list will be that which was originally input
         inside_alpha = points
     if len(inside_alpha) == 0:
         return []
@@ -304,19 +296,20 @@ def inside_alpha_shape(shape, points, check_bounds=True):
     points = inside_alpha
     num_tri = len(triangles)
     inside = []
-
     i = 0
     num_intersections = np.zeros(len(points))
+    #Individually process each triangle trhough Moller trumbore, as one would trial line segments
+    #   in the point-in-polygon problem.
     for tri in triangles:
         progressBar(i, num_tri - 1, prefix='Running Moller Trumbore     ')
         i += 1
         res = moller_trumbore_ray_intersection_array(
             points, tri, np.array([EPSILON, 0, RAY_UNIT - EPSILON]))
-        # where res == true
         num_intersections[np.where(res)] += 1
 
     if len(np.where(isodd(num_intersections))[0]) == 0:
-        return []
+        return []  # IF nothing is odd, then there's nothing in the alpha shape
+
     inside = points[np.where(isodd(num_intersections))]
     return inside
 
@@ -387,6 +380,7 @@ def maximize_manipulability_at_point(bot, pos):
         max_manip_pos (transform)
     """
     def maximize_helper(pos, bot=bot):
+        # Calculate manipulability with given orientation of end effector
         theta, suc = bot.IK(pos)
         if not suc:
             return 0
@@ -394,14 +388,16 @@ def maximize_manipulability_at_point(bot, pos):
         return (mrv + mrw) / 2
 
     def lambda_handle(x, pos=pos):
+        # Handle for the maximize helper to be plugged into fmin
         return 1 - maximize_helper(tm([pos[0], pos[1], pos[2], x[0], x[1], x[2]]))
 
-    rot_init = np.zeros(3)
+    rot_init = np.zeros(3)  # Initialize to no orientation
     sol = sci.optimize.fmin(lambda_handle, rot_init, disp=False)
     max_manip_pos = tm([pos[0], pos[1], pos[2], sol[0], sol[1], sol[2]])
     theta, suc = bot.IK(max_manip_pos)
     if not suc:
-        return 0, tm(), theta
+        return 0, tm(), theta  # If the chosen position wasn't successful, there probably isn't
+        #   a potential solution at all, so just return an empty set
     score = sum(calculate_manipulability_score(bot, theta)) / 2
     return score, max_manip_pos, theta
 
@@ -423,6 +419,7 @@ def calculate_manipulability_score(bot, theta):
     a_w = jw @ jw.T
     a_v = jv @ jv.T
 
+    #Extract the eigenvectors
     aw_eig, _ = np.linalg.eig(a_w)
     av_eig, _ = np.linalg.eig(a_v)
 
@@ -439,7 +436,7 @@ def process_empty(p):
     Args:
         p: Point
     Returns:
-        [p, 0, []]
+        [p, 0, [], [], []]
     """
     return [p, 0, [], [], []]
 
@@ -455,6 +452,8 @@ def get_collision_data(collision_manager):
     collision_manager.update()
     inter_collisions = False
     if len(collision_manager.collision_objects) > 1:
+        # if there's another object in the collision manager, it's likely an obstacle
+        #   that we need to consider.
         inter_collisions = collision_manager.checkCollisions()[0]
     solo_collisions = collision_manager.collision_objects[0].checkInternalCollisions()
     if inter_collisions or solo_collisions:
@@ -505,6 +504,20 @@ def process_point(p,
     return [p, success_count / true_rez, successes, thetas]
 
 def setup_collision_manager(bot, stl_mesh = None, exempt_ee = False):
+    """
+    Set up a collision manager for a robot arm and optional object
+
+    Because the collision manager, being C based, is not pickleable,
+    it must be set up fresh in each subprocess which wishes to use it.
+
+    Args:
+        bot: robot to use inside of the collision manager
+        stl_mesh: optional mesh file detailing an obstacle that the robot must avoid
+        exempt_ee: whether or not to consider the EE of the robot in collisions
+
+    Returns:
+        ColliderManager: Collision manager, with arm in index 0
+    """
     collision_manager = ColliderManager()
     collision_manager.bind(ColliderArm(bot, 'model'))
     if stl_mesh is not None:
@@ -517,8 +530,8 @@ def setup_collision_manager(bot, stl_mesh = None, exempt_ee = False):
     return collision_manager
 
 def chunk_point_processing(points, sphere, true_rez, bot,
-        use_jacobian, collision_detect, stl_mesh = None,
-        exempt_ee = False, display_eta = False):
+        use_jacobian, collision_detect, stl_mesh=None,
+        exempt_ee=False, display_eta=False):
     """
     Process points in a chunk (for parallel computation)
 
@@ -537,7 +550,6 @@ def chunk_point_processing(points, sphere, true_rez, bot,
         list: results (as of process point)
 
     """
-
     collision_manager = None
     if collision_detect:
         collision_manager = setup_collision_manager(bot, stl_mesh, exempt_ee)
@@ -554,6 +566,7 @@ def chunk_point_processing(points, sphere, true_rez, bot,
                     prefix='Chunked Point Processing',
                     ETA=start)
     return results
+
 
 def parallel_brute_manipulability_collision_head(
         bot, thetas_prior, resolution, excluded,
@@ -600,12 +613,13 @@ def brute_fk_manipulability_recursive_process(bot, thetas_prior,
 
     """
     success_list = []
-    if dof_iter in excluded:
+    if dof_iter in excluded:  #To run full brute manipulability, simply pass in an empty list
         if dof_iter > 0:
             theta_list = [0.0] + thetas_prior
             return brute_fk_manipulability_recursive_process(bot,
                     theta_list, resolution, excluded, dof_iter - 1, start,
                     collision_detect, collision_manager)
+        #If this is the base link, we have no choice but to process with zeros
         joint_configurations = np.zeros(resolution)
     else:
         joint_configurations = np.linspace(
@@ -614,41 +628,53 @@ def brute_fk_manipulability_recursive_process(bot, thetas_prior,
             resolution)
     for i in range(resolution):
         if dof_iter == len(bot.joint_mins) - 1:
+            # If this is the top layer of recursion, we can run a progress bar for the user
             progressBar(i, resolution-1, 'Running Brute Manipulability', ETA=start)
         theta_i = joint_configurations[i]
         theta_list = [theta_i] + thetas_prior
-        if dof_iter == 0:
-            #print(theta_list)
+        if dof_iter == 0:  # Calculations only occur at the bottom recursion layer
             theta_array = np.array(theta_list)
             ee_pos = bot.FK(theta_array)
             if isinstance(ee_pos, tuple):
+                #This is here to handle the case in which parallelism is applied and the
+                #   Robot link is not used
                 ee_pos = ee_pos[0]
             if collision_detect:
                 collision_manager.update()
                 if collision_manager.checkCollisions()[0]:
+                    # If in collision, don't bother to check manipulability
                     continue
             mrv, mrw = calculate_manipulability_score(bot, theta_array)
             score = (mrv + mrw) / 2
             result = [ee_pos, score, theta_array, [mrv, mrw]]
             success_list.append(result)
         else:
+            #If not the base link, simply recurse
             success_list.extend(
                 brute_fk_manipulability_recursive_process(bot,
                         theta_list, resolution, excluded,
                         dof_iter - 1, start,
                         collision_detect, collision_manager))
     return success_list
+
 class WorkspaceAnalyzer:
     """
     Used To Analyze A Variety of Pose Configurations for Defined Robots
     """
 
     def __init__(self, linkedRobot):
+        """
+        Create a workspace analyzer object which can be implemented by other software
+        Args:
+            linkedRobot: Linked robot to analyze
+        Returns:
+            WorkspaceAnalyzer: Resulting analysis handle
+        """
         self.bot = linkedRobot
         cpu_count = os.cpu_count()
         self.num_procs = 4
         if cpu_count is not None:
-            self.num_procs = cpu_count - 1 # Leave a CPU for doing other things
+            self.num_procs = cpu_count - 1  # Leave a CPU for doing other things
         if not self.bot.is_ready():
             print('Please Check Bindings')
         self.unique_decimals = UNIQUE_DECIMALS
@@ -773,8 +799,6 @@ class WorkspaceAnalyzer:
             Successful Poses: Numpy[i,4,4] NDArray indicating successful poses, None if none
             Failed Poses: Numpy [i,4,4] NdArray indicating failed poses, None if all are Successful
         """
-        #TODO(Liam) add in swich to pull TM(matrix) from tm(object) if necessary
-        #I don't think it should be necessary: can be otherwise specified in lambda funcs
         num_poses = len(desired_poses)
         failed_poses = []
         successful_poses = []
@@ -811,7 +835,6 @@ class WorkspaceAnalyzer:
         results = []
 
         sphere, true_rez = gen_manip_sphere(manip_resolution)
-
         collision_manager = None
 
         start = time.time()
@@ -941,19 +964,13 @@ class WorkspaceAnalyzer:
             success_list: List of successful transformation matrices
         """
         success_list = []
-        #disp(iterations_per_dof, "IterPerDof")
-        # total_iter = iterations_per_dof * num_dof
         joint_configurations = np.linspace(self.bot.joint_mins[dof_iter],
                                            self.bot.joint_maxs[dof_iter],
                                            iterations_per_dof)
         for i in range(iterations_per_dof):
             theta_i = joint_configurations[i]
             theta_list = [theta_i] + thetas_prior
-
-            #progressBar(total_iter-(iterations_per_dof*(dof_iter+1))+i, total_iter-1)
-            #print(theta_list)
             if dof_iter == 0:
-                #print(theta_list)
                 ee_pos, success = self.bot.FK(np.array(theta_list))
                 if success:
                     success_list.append(ee_pos)
@@ -975,7 +992,6 @@ class WorkspaceAnalyzer:
         """
         disp('Beginning Analysis')
         num_dof = len(self.bot.joint_mins)
-        #iterations_per_dof = math.floor(num_iterations**(1/float(num_dof)))
         iterations_per_dof = num_iterations
 
         disp('Calibrating ETA')
@@ -1223,7 +1239,6 @@ class WorkspaceAnalyzer:
                     continue
             #Ignore points which are too far away
             if fsr.distance(p, bot_base) > self.max_dist:
-                #TODO(Liam) determine max reach from AShape
                 empty_results.append(process_empty(p))
                 continue
             #Ignore points which are too close together
@@ -1286,6 +1301,98 @@ class WorkspaceAnalyzer:
         return self.analyze_task_space_manipulability(point_cloud,
                 manip_resolution, parallel, use_jacobian, collision_detect)
 
+    def analyze_manipulability_point_cloud_with_trajectory(self, point_cloud, trajectory_list,
+        manip_resolution, point_interpolation_dist=-1, manipulability_mode=True,
+        point_interpolation_mode=1, collision_detect=False, parallel=False):
+        """
+        Analyze manipulability on a point cloud with trajectory applied to each point.
+        Make sure that the initial points are oriented correctly for the analysis to work.
+
+        Args:
+            point_cloud: Point cloud (perhaps representing the surface of an object)
+            trajectory_list: the local waypoints that make up a trajectory (such as withdrawing)
+            manip_resolution: manipulation resultion of a unit sphere
+            point_interpolation_dist: maximum distance between interpolated points in a trajectory
+            manipulability_mode: whether or not to use jacobian or unit sphere manipulabilitity
+            point_interpolation_mode: Whether or not to use arc interpolation
+            collision_detect: Whether or not to use collision detection
+            parallel: Whether or not to evaluate in parallel
+
+        Returns:
+            List: Results List for trajectory analysis
+        """
+
+        print('Interpolating Trajectory As Required')
+        trajectory_list = complete_trajectory(
+            trajectory_list, point_interpolation_dist, point_interpolation_mode)
+
+        print('Preprocessing requested local trajectory')
+        trajectory_cloud = []
+
+        for point in point_cloud:
+            local_trajectory = []
+            for traj_point in trajectory_list:
+                local_trajectory.append(fsr.globalToLocal(point, traj_point))
+            trajectory_cloud.append(local_trajectory)
+
+        complete_results = []
+        results = []
+        #It's probably better to handle parallelism on a surface level here
+        if parallel:
+            async_results = []
+            chunk_sz = len(trajectory_cloud) // self.num_procs
+            with mp.Pool(self.num_procs) as pool:
+                start = time.time()
+                results = []
+
+                sphere, true_rez = gen_manip_sphere(manip_resolution)
+                for i in range(self.num_procs):
+                    progressBar(i,
+                            self.num_procs - 1,
+                            prefix='Spawning Async Tasks        ',
+                            ETA=start)
+                    display_eta = i == (self.num_procs - 1)
+                    small_ind = i * chunk_sz
+                    large_ind = (i + 1) * chunk_sz
+                    if display_eta:
+                        large_ind = len(trajectory_cloud)
+                    for t in trajectory_cloud[small_ind:large_ind]:
+                        async_results.append(pool.apply_async(chunk_point_processing, (
+                                t, sphere, true_rez, self.bot.robot,
+                                manipulability_mode, collision_detect
+                                )))
+                wait_for(async_results[-1], 'Running Task Manipulability')
+                start_2 = time.time()
+                for i in range(len(async_results)):
+                    progressBar(i,
+                            len(async_results)-1,
+                            prefix='Collecting Async Results',
+                            ETA=start_2)
+                    results.append(async_results[i].get(timeout=5*len(trajectory_cloud)))
+
+        else:
+            for trajectory in trajectory_cloud:
+                #Evaluate the trajectory
+                trajectory_result = self.analyze_task_space_manipulability(trajectory,
+                        manip_resolution, parallel, manipulability_mode, collision_detect)
+
+                #Process Trajectory Result to collect metadata
+                results.append(trajectory_result)
+
+        print('Post-Processing Collected Data')
+        for trajectory_result in results:
+            valid = True
+            score_average = 1.0
+            for res in trajectory_result:
+                if res[1] == 0:
+                    valid = False
+                score_average += res[1]
+            score_average = score_average / len(trajectory_result)
+
+            complete_results.append([valid, score_average, trajectory_result])
+
+        return complete_results
+
     def analyze_manipulability_over_trajectory(self,
                                                point_list,
                                                manipulability_mode=1,
@@ -1314,36 +1421,8 @@ class WorkspaceAnalyzer:
         """
 
         #Step One: Flesh out the point list if necessary
-        if point_interpolation_dist > 0:
-            new_points = []
-            point_list_len = len(point_list)
-            start = time.time()
-            for i in range(point_list_len):
-                progressBar(i,
-                            point_list_len - 1,
-                            'Filling Trajectory      ',
-                            ETA=start)
-                if i == point_list_len - 1:  # Add the last point, ensuring at least one point
-                    new_points.append(point_list[i])
-                    continue
-                start_point = point_list[i]
-                end_point = point_list[i + 1]
-                distance = fsr.arcDistance(start_point, end_point)
-                if distance < point_interpolation_dist:
-                    continue
-                while distance > point_interpolation_dist:
-                    # Linear gap closes by directly interpolating between waypoints and scaling by
-                    #   a distance, creating a linear path.
-                    # Arc gap creates a more curved or 'arced' trajectory from waypoints A to B
-                    if point_interpolation_mode == 1:
-                        start_point = fsr.closeLinearGap(start_point, end_point,
-                                                   point_interpolation_dist)
-                    else:
-                        start_point = fsr.closeArcGap(start_point, end_point,
-                                                 point_interpolation_dist)
-                    distance = fsr.arcDistance(start_point, end_point)
-                    new_points.append(start_point)
-            point_list = new_points
+        point_list = complete_trajectory(
+                point_list, point_interpolation_dist, point_interpolation_mode)
 
         #Step Two: Determine Manipulability Function
         results = self.analyze_task_space_manipulability(point_list,
