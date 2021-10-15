@@ -40,6 +40,7 @@ done = False
 cmd_str_help = 'help'
 cmd_str_exit = 'exit'
 cmd_str_load_robot = 'loadRobot'
+cmd_str_fuse_manipulability = 'fuseManipulabilityFiles'
 cmd_str_analyze_task_manipulability = 'analyzeTaskSpaceManipulability'
 cmd_str_analyze_total_workspace_exhaustive = 'exhaustiveMethodTotalWorkspace'
 cmd_str_analyze_total_workspace_alpha = 'alphaMethodTotalWorkspace'
@@ -1031,6 +1032,8 @@ class CommandExecutor:
             return self.cmd_analyze_brute_manipulability(cmds_parsed)
         elif cmds_parsed[0] == cmd_str_manipulability_over_trajectory_cloud:
             return self.cmd_analyze_point_cloud_with_trajectory(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_fuse_manipulability:
+            return self.cmd_compare_manipulabiltity_space(cmds_parsed)
 
 
 class WorkspaceCommandLine(CommandExecutor):
@@ -1173,6 +1176,8 @@ class WorkspaceCommandLine(CommandExecutor):
                 disp(self.cmd_view_manipulability_space.__doc__)
             elif cmds[1] == cmd_str_brute_manipulability:
                 disp(self.cmd_analyze_brute_manipulability.__doc__)
+            elif cmds[1] == cmd_str_fuse_manipulability:
+                disp(self.cmd_compare_manipulability_space.__doc__)
         else:
             disp('\nhelp [cmd] for details\nValid Commands:')
             for command in valid_commands:
