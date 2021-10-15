@@ -18,7 +18,7 @@ from faser_utils.disp.disp import disp, progressBar
 from robot_link import RobotLink
 from alpha_shape import AlphaShape
 from workspace_analyzer import WorkspaceAnalyzer
-from workspace_helper_functions import score_point, post_flag
+from workspace_helper_functions import score_point, score_point_div, post_flag
 from workspace_helper_functions import load_point_cloud_from_file, sort_cloud
 from workspace_viewer import view_workspace
 
@@ -86,6 +86,7 @@ valid_commands = [
 # General_Flags
 cmd_flag_save_results = '-o'
 cmd_flag_input_file = '-f'
+cmd_flag_input_file_2 = '-f2'
 cmd_flag_num_iters = '-numIterations'
 cmd_flag_plot_results = '-plot'
 cmd_flag_parallel = '-parallel'
@@ -315,7 +316,7 @@ class CommandExecutor:
             triangles=alpha.triangle_inds, cmap=my_cmap,alpha =.2, edgecolor='black')
         plt.show()
 
-    def plot_manipulability_grid(self, results, grid_rez):
+    def plot_manipulability_grid(self, results, grid_rez, type = 1):
         """
         Plots a manipulability grid given results and a grid resolution
 
@@ -330,11 +331,142 @@ class CommandExecutor:
         ax.set_zlim3d(-4,4)
         for r in results:
             score = r[1]
-            col = score_point(score)
+            if type == 1:
+                col = score_point(score)
+            elif type == 2:
+                col = score_point_div(score)
             DrawRectangle(
                 tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
                 [grid_rez]*3, ax, c=col, a=TRANSPARENCY_CONSTANT)
         plt.show()
+
+    def cmd_compare_manipulability_space(self, cmds):
+        save_output, out_file_name = self.save_results_flag(cmds)
+        file_1_name = post_flag(cmd_flag_input_file, cmds)
+        file_2_name = post_flag(cmd_flag_input_file_2, cmds)
+        workspace_len_1 = len(work_space_1)
+        workspace_len_2 = len(work_space_2)
+        def open_work_space(workspace_file_name):
+            with open(workspace_file_name, 'rb') as fp:
+                work_space = pickle.load(fp)
+            return work_space
+
+        work_space_1 = open_work_space(file_1_name)
+        work_space_2 = open_work_space(file_2_name)
+
+        def find_bounds_workspace(work_space):
+            sliced = [[[]]]
+            workspace_len = len(work_space)
+            x_min_dim, y_min_dim, z_min_dim = np.Inf, np.Inf, np.Inf
+            x_max_dim, y_max_dim, z_max_dim = -np.Inf, -np.Inf, -np.Inf
+            x_min_prox, y_min_prox, z_min_prox = np.Inf, np.Inf, np.Inf
+
+            for i in range(workspace_len):
+                progressBar(i, workspace_len - 1, prefix='Finding Workspace Bounds')
+                p = work_space[i][0]
+                if i < workspace_len - 1:
+                    pn = work_space[i + 1][0]
+                    if abs(p[0] - pn[0]) < x_min_prox and abs(p[0] - pn[0]) > .05:
+                        x_min_prox = abs(p[0] - pn[0])
+                    if abs(p[1] - pn[1]) < y_min_prox and abs(p[1] - pn[1]) > .05:
+                        y_min_prox = abs(p[1] - pn[1])
+                    if abs(p[2] - pn[2]) < z_min_prox and abs(p[2] - pn[2]) > .05:
+                        z_min_prox = abs(p[2] - pn[2])
+                if p[0] < x_min_dim:
+                    x_min_dim = p[0]
+                if p[1] < y_min_dim:
+                    y_min_dim = p[1]
+                if p[2] < z_min_dim:
+                    z_min_dim = p[2]
+                if p[0] > x_max_dim:
+                    x_max_dim = p[0]
+                if p[1] > y_max_dim:
+                    y_max_dim = p[1]
+                if p[2] > z_max_dim:
+                    z_max_dim = p[2]
+            print('Creating Graph Skeleton')
+
+            if not np.isclose(x_min_prox, z_min_prox, 0.01) and not np.isclose(y_min_prox, z_min_prox):
+                print('Grid is not cubic')
+                print([x_min_prox, y_min_prox, z_min_prox])
+                return None
+
+            x_bound = int(np.ceil(x_max - x_min))
+            y_bound = int(np.ceil(y_max - y_min))
+            z_bound = int(np.ceil(z_max - z_min))
+
+            real_bounds = [
+                x_min_dim, x_max_dim, y_min_dim, y_max_dim, z_min_dim, z_max_dim
+            ]
+
+            bounds = [x_bound, y_bound, z_bound]
+            return real_bounds, bounds, (x_min_prox + y_min_prox + z_min_prox)/3
+        real_bounds_a, bounds_a, gza = find_bounds_workspace(work_space_1)
+        real_bounds_b, bounds_b, gzb = find_bounds_workspace(work_space_2)
+
+        grid = np.round((gza + gzb) / 2, 5)
+        counters_min_a = np.array([real_bounds_a[0], real_bounds_a[2], real_bounds_a[4]]) * (1 / grid)
+        counters_min_b = np.array([real_bounds_b[0], real_bounds_b[2], real_bounds_b[4]]) * (1 / grid)
+
+        #Build Counter Grid
+        counters_max = [0, 0, 0]
+        counters_max[0] = max(bounds_a[0], bounds_b[0]) + 1
+        counters_max[1] = max(bounds_a[1], bounds_b[1]) + 1
+        counters_max[2] = max(bounds_a[2], bounds_b[2]) + 1
+
+        #Create the Points Array
+        point_counter = 0
+        total_grid_points = counters_max[0] * counters_max[1] * counters_max[2]
+        points_array = []
+        for i in range(counters_max[0]):
+            points_array.append([])
+            for j in range(counters_max[1]):
+                points_array[i].append([])
+                for k in range(counters_max[2]):
+                    point_counter += 1
+                    progressBar('generating grid array', point_counter, total_grid_points)
+                    points_array[i][j].append([-1, -1])
+
+        def place_point_in_grid(point, point_index, mins):
+            p = point[0]
+            xind = int(round(-mins[0] + (p[0] * (1 / grid))))
+            yind = int(round(-mins[1] + (p[1] * (1 / grid))))
+            zind = int(round(-mins[2] + (p[2] * (1 / grid))))
+
+            points_array[xind][yind][zind][point_index]=point
+
+        #Organize Points Based on Grid Coordinate
+        for f in range(workspace_len_1):
+            place_point_in_grid(work_space_1[f], 0, counters_min_a)
+        for f in range(workspace_len_2):
+            place_point_in_grid(work_space_2[f], 1, counters_min_b)
+
+        #Finish Synthesis of Points in Grid
+        for i in range(counters_max[0]):
+            for j in range(counters_max[1]):
+                for k in range(counters_max[2]):
+                    sub = points_array[i][j][k]
+                    r = 0.5
+                    new_list_count+=1
+                    if not isinstance(sub[0], list) and not isinstance(sub[1], list):
+                        continue
+                    elif not isinstance(sub[0], list):
+                        r = 0.5 + sub[1][1]/2
+                        sub[1][1] = r
+                        new_point_list.append(sub[1])
+                    elif not isinstance(sub[1], list):
+                        r = 0.5 - sub[0][1]/2
+                        sub[0][1] = r
+                        new_point_list.append(sub[0])
+                    else:
+                        r = 0.5 + sub[1][1]/2 - sub[0][1]/2
+                        sub[1][1] = r
+                        new_point_list.append(sub[1])
+
+        if plot:
+            self.plot_manipulability_grid(new_point_list, 0.1, 2)
+        if save_output:
+            self.save_to_file(new_point_list, out_file_name)
 
     def cmd_analyze_task_manipulability(self, cmds):
         """

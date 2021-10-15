@@ -22,14 +22,16 @@ from faser_utils.disp.disp import disp, progressBar
 
 # Constant Values
 EPSILON = .000001  # Deviation Acceptable for Moller Trumbore
+MOLLER_BIAS = np.pi/1000 #Arbitrary Small Amount
 RAY_UNIT = 10  # Unit Vector Constant in Moller Trumbore. Arbitrary
 MAX_DIST = 10  # Maximum distance from robot base to discount points in object surface
 UNIQUE_DECIMALS = 2  # Decimal places to filter out for uniqueness in Alpha Shapes
+MOLLER_RAY = np.array([MOLLER_BIAS, 2 * MOLLER_BIAS, 1 - 3 * MOLLER_BIAS])
 
 # Number of DOF from the End Effector assumed to be capable of creating a 3d shape
 # Through varying of the last n DOF and tracking End Effector coordinates.
 # Insufficient DOF OFFSET can result in the alpha shape reachability solver failing.
-DOF_OFFSET = 3
+DOF_OFFSET = 9
 
 #The ALPHA_VALUE is the alpha parameter  which determines which points are included or
 # excluded to create an alpha shape. This is technically an optional parameter,
@@ -104,7 +106,7 @@ def grid_cloud_within_volume(shape, resolution=.25):
         min_t = -round_near(abs(bounds[0]), resolution)
         max_t = round_near(bounds[1], resolution)
         step = (max_t - min_t) / resolution
-        return np.linspace(min_t, max_t, step)
+        return np.arange(min_t, max_t, resolution) #Changed to Arange to achieve desired steps
 
     x_space = gen_lin(bounds_x).tolist()
     y_space = gen_lin(bounds_y).tolist()
@@ -122,7 +124,7 @@ def grid_cloud_within_volume(shape, resolution=.25):
 
 def moller_trumbore_ray_intersection(origin_point,
                                      triangle,
-                                     ray_dir=[0, 0, 1]):
+                                     ray_dir=MOLLER_RAY):
     """
     Execute Moller-Trumbore triangle/Ray Intersection Algorithm on a single point
     Args:
@@ -166,7 +168,7 @@ def moller_trumbore_ray_intersection(origin_point,
 
 def moller_trumbore_ray_intersection_array(points,
                                            triangle,
-                                           ray=np.array([0, 0, 1])):
+                                           ray=MOLLER_RAY):
     """
     Executes Moller-Trumbore triangle/Ray Intersection Algorithm on a group
     of points simultaneously, utilizing numpy array expressions.
@@ -215,22 +217,20 @@ def moller_trumbore_ray_intersection_array(points,
     return res
 
 
-def chunk_moller_trumbore(test_points, triangles, epsilon_vector, result_array):
+def chunk_moller_trumbore(test_points, triangles, result_array):
     """
     Perform a chunk of moller_trumbore, useful for parallel processing.
 
     Args:
         test_points: points to process [nx3]
         triangles: list/array of triangles to test with moller_trumbore
-        epsilon_vector: epsilon used for Moller Trumbore
         result_array: [nx1] vector of ints used to count triangle intersections
     Returns:
         result_array
     """
     for i in range(np.shape(triangles)[0]):
         res = moller_trumbore_ray_intersection_array(test_points,
-                                                     triangles[i, :],
-                                                     epsilon_vector)
+                                                     triangles[i, :])
         result_array[np.where(res)] += 1
     return result_array
 
@@ -276,16 +276,28 @@ def inside_alpha_shape(shape, points, check_bounds=True):
         #Before we start moller_trumbore, eliminate any points that are outside of the known bounds
         num_points = len(points)
         i = 0
-        for point in points:
-            progressBar(i, num_points - 1, prefix='Checking Bounds             ')
-            i += 1
-            if (point[0] < bounds[0][0] or point[0] > bounds[0][1]
-                    or point[1] < bounds[1][0] or point[1] > bounds[1][1]
-                    or point[2] < bounds[2][0] or point[2] > bounds[2][1]):
+        if num_points < 1:
+            # Attempted to analyze empty point set
+            return []
+        elif num_points == 1:
+            if (points[0][0] < bounds[0][0] or points[0][0] > bounds[0][1]
+                    or points[0][1] < bounds[1][0] or points[0][1] > bounds[1][1]
+                    or points[0][2] < bounds[2][0] or points[0][2] > bounds[2][1]):
                 # Erasure by continuing
-                continue
+                return []
             else:
-                inside_alpha.append(point)
+                inside_alpha.append(points[0])
+        else:
+            for point in points:
+                progressBar(i, num_points - 1, prefix='Checking Bounds             ')
+                i += 1
+                if (point[0] < bounds[0][0] or point[0] > bounds[0][1]
+                        or point[1] < bounds[1][0] or point[1] > bounds[1][1]
+                        or point[2] < bounds[2][0] or point[2] > bounds[2][1]):
+                    # Erasure by continuing
+                    continue
+                else:
+                    inside_alpha.append(point)
         inside_alpha = np.array(inside_alpha)
     else:
         # If didn't opt to check bounds, the target list will be that which was originally input
@@ -304,7 +316,7 @@ def inside_alpha_shape(shape, points, check_bounds=True):
         progressBar(i, num_tri - 1, prefix='Running Moller Trumbore     ')
         i += 1
         res = moller_trumbore_ray_intersection_array(
-            points, tri, np.array([EPSILON, 0, RAY_UNIT - EPSILON]))
+            points, tri)
         num_intersections[np.where(res)] += 1
 
     if len(np.where(isodd(num_intersections))[0]) == 0:
@@ -1048,18 +1060,24 @@ class WorkspaceAnalyzer:
             ee_pos, _ = self.bot.FK(theta_list)  #Reset to Neutral Pose
 
             local_cloud = [fsr.globalToLocal(ee_pos, x) for x in current_cloud]
-            if dof_iter < (total_dof - self.dof_offset):
-                point_list = [point.TAA.flatten()[0:3] for point in local_cloud]
 
-                array_temp = np.array(point_list)
-                array_filtered = np.unique(array_temp.round(decimals=self.unique_decimals), axis=0)
-                #Could potentially implement the point exclusion section
-                ashape = AlphaShape(array_filtered, self.alpha_value)
-                verts = ashape.verts
-                #local_cloud = []
-                local_cloud = [tm([v[0], v[1], v[2], 0, 0, 0]) for v in verts]
-                #for vert in verts:
-                #    local_cloud.append(tm([vert[0], vert[1], vert[2], 0,0,0]))
+            if dof_iter < (total_dof - self.dof_offset):
+                try:
+                    point_list = [point.TAA.flatten()[0:3] for point in local_cloud]
+
+                    array_temp = np.array(point_list)
+                    array_filtered = np.unique(array_temp.round(decimals=self.unique_decimals), axis=0)
+                    #Could potentially implement the point exclusion section
+                    ashape = AlphaShape(array_filtered, self.alpha_value)
+                    verts = ashape.verts
+                    #local_cloud = []
+                    local_cloud = [tm([v[0], v[1], v[2], 0, 0, 0]) for v in verts]
+                    #for vert in verts:
+                    #    local_cloud.append(tm([vert[0], vert[1], vert[2], 0,0,0]))
+                except:
+                    #Failure in case of insufficient dimensionality of arm will result in the alpha shape
+                    #Generator to fail, 3
+                    print("Insufficient Dimensions in Arm, Trying Next DOF")
             for i in range(num_spread):
                 theta_list[dof_iter] = joint_configurations[i]
                 ee_pos, success = self.bot.FK(theta_list)

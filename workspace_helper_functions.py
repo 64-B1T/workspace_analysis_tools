@@ -78,7 +78,7 @@ def convert_from_json(json_file_name):
 
 
 
-def score_point(score):
+def score_point_div(score):
     """
     Scores a point for use in plotting.
 
@@ -107,6 +107,45 @@ def score_point(score):
     elif score > .1:
         col = 'red'
     return col
+
+def score_point_div(score):
+    """
+    Scores a point for use in plotting.
+
+    Args:
+        score: float score of point
+    Returns:
+        color: matplotlib color
+    """
+    col = 'darkviolet'
+    if score > .9:
+        col = 'limegreen'
+    elif score > .8:
+        col = 'green'
+    elif score > .7:
+        col = 'mediumseagreen'
+
+    elif score < .1:
+        col = 'darkred'
+    elif score < .2:
+        col = 'red'
+    elif score < .3:
+        col = 'orangered'
+
+    elif score > .6:
+        col = 'teal'
+
+    elif score < .4:
+        col = 'chocolate'
+
+    elif score > .55:
+        col =  'darkslategray'
+
+    elif score < .45:
+        col = 'saddlebrown'
+
+    return col
+
 
 def complete_trajectory(point_list, point_interpolation_dist, point_interpolation_mode):
     """
