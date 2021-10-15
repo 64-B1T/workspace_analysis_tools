@@ -20,6 +20,7 @@ from alpha_shape import AlphaShape
 from workspace_analyzer import WorkspaceAnalyzer
 from workspace_helper_functions import score_point, score_point_div, post_flag
 from workspace_helper_functions import load_point_cloud_from_file, sort_cloud
+from workspace_helper_functions import find_bounds_workspace
 from workspace_viewer import view_workspace
 
 #The ALPHA_VALUE is the alpha parameter which determines which points are included or
@@ -344,8 +345,7 @@ class CommandExecutor:
         save_output, out_file_name = self.save_results_flag(cmds)
         file_1_name = post_flag(cmd_flag_input_file, cmds)
         file_2_name = post_flag(cmd_flag_input_file_2, cmds)
-        workspace_len_1 = len(work_space_1)
-        workspace_len_2 = len(work_space_2)
+
         def open_work_space(workspace_file_name):
             with open(workspace_file_name, 'rb') as fp:
                 work_space = pickle.load(fp)
@@ -353,60 +353,27 @@ class CommandExecutor:
 
         work_space_1 = open_work_space(file_1_name)
         work_space_2 = open_work_space(file_2_name)
+        workspace_len_1 = len(work_space_1)
+        workspace_len_2 = len(work_space_2)
 
-        def find_bounds_workspace(work_space):
-            sliced = [[[]]]
-            workspace_len = len(work_space)
-            x_min_dim, y_min_dim, z_min_dim = np.Inf, np.Inf, np.Inf
-            x_max_dim, y_max_dim, z_max_dim = -np.Inf, -np.Inf, -np.Inf
-            x_min_prox, y_min_prox, z_min_prox = np.Inf, np.Inf, np.Inf
-
-            for i in range(workspace_len):
-                progressBar(i, workspace_len - 1, prefix='Finding Workspace Bounds')
-                p = work_space[i][0]
-                if i < workspace_len - 1:
-                    pn = work_space[i + 1][0]
-                    if abs(p[0] - pn[0]) < x_min_prox and abs(p[0] - pn[0]) > .05:
-                        x_min_prox = abs(p[0] - pn[0])
-                    if abs(p[1] - pn[1]) < y_min_prox and abs(p[1] - pn[1]) > .05:
-                        y_min_prox = abs(p[1] - pn[1])
-                    if abs(p[2] - pn[2]) < z_min_prox and abs(p[2] - pn[2]) > .05:
-                        z_min_prox = abs(p[2] - pn[2])
-                if p[0] < x_min_dim:
-                    x_min_dim = p[0]
-                if p[1] < y_min_dim:
-                    y_min_dim = p[1]
-                if p[2] < z_min_dim:
-                    z_min_dim = p[2]
-                if p[0] > x_max_dim:
-                    x_max_dim = p[0]
-                if p[1] > y_max_dim:
-                    y_max_dim = p[1]
-                if p[2] > z_max_dim:
-                    z_max_dim = p[2]
-            print('Creating Graph Skeleton')
-
-            if not np.isclose(x_min_prox, z_min_prox, 0.01) and not np.isclose(y_min_prox, z_min_prox):
-                print('Grid is not cubic')
-                print([x_min_prox, y_min_prox, z_min_prox])
-                return None
-
-            x_bound = int(np.ceil(x_max - x_min))
-            y_bound = int(np.ceil(y_max - y_min))
-            z_bound = int(np.ceil(z_max - z_min))
-
-            real_bounds = [
-                x_min_dim, x_max_dim, y_min_dim, y_max_dim, z_min_dim, z_max_dim
-            ]
-
-            bounds = [x_bound, y_bound, z_bound]
-            return real_bounds, bounds, (x_min_prox + y_min_prox + z_min_prox)/3
         real_bounds_a, bounds_a, gza = find_bounds_workspace(work_space_1)
         real_bounds_b, bounds_b, gzb = find_bounds_workspace(work_space_2)
 
+        if not np.isclose(gza, gzb, 0.001):
+            print('Grid sizes are incompatible')
+            return
+        if gza is None or gzb is None:
+            if gza is None:
+                print('Workspace 1 grid is not cubic')
+            else:
+                print('Workspace 2 grid is not cubic')
+            return
+
         grid = np.round((gza + gzb) / 2, 5)
-        counters_min_a = np.array([real_bounds_a[0], real_bounds_a[2], real_bounds_a[4]]) * (1 / grid)
-        counters_min_b = np.array([real_bounds_b[0], real_bounds_b[2], real_bounds_b[4]]) * (1 / grid)
+        counters_min_a = np.array([real_bounds_a[0],
+            real_bounds_a[2], real_bounds_a[4]]) * (1 / grid)
+        counters_min_b = np.array([real_bounds_b[0],
+            real_bounds_b[2], real_bounds_b[4]]) * (1 / grid)
 
         #Build Counter Grid
         counters_max = [0, 0, 0]
@@ -418,13 +385,15 @@ class CommandExecutor:
         point_counter = 0
         total_grid_points = counters_max[0] * counters_max[1] * counters_max[2]
         points_array = []
-        for i in range(counters_max[0]):
+        for i in range(counters_max[0]): #Generating this in a single line caused object duplication issues
             points_array.append([])
             for j in range(counters_max[1]):
                 points_array[i].append([])
                 for k in range(counters_max[2]):
                     point_counter += 1
-                    progressBar('generating grid array', point_counter, total_grid_points)
+                    progressBar(
+                        'generating grid array',
+                        point_counter, total_grid_points)
                     points_array[i][j].append([-1, -1])
 
         def place_point_in_grid(point, point_index, mins):
@@ -441,6 +410,7 @@ class CommandExecutor:
         for f in range(workspace_len_2):
             place_point_in_grid(work_space_2[f], 1, counters_min_b)
 
+        new_point_list = []
         #Finish Synthesis of Points in Grid
         for i in range(counters_max[0]):
             for j in range(counters_max[1]):
@@ -450,7 +420,7 @@ class CommandExecutor:
                     new_list_count+=1
                     if not isinstance(sub[0], list) and not isinstance(sub[1], list):
                         continue
-                    elif not isinstance(sub[0], list):
+                    if not isinstance(sub[0], list):
                         r = 0.5 + sub[1][1]/2
                         sub[1][1] = r
                         new_point_list.append(sub[1])
@@ -463,6 +433,7 @@ class CommandExecutor:
                         sub[1][1] = r
                         new_point_list.append(sub[1])
 
+        plot = cmd_flag_plot_results in cmds
         if plot:
             self.plot_manipulability_grid(new_point_list, 0.1, 2)
         if save_output:

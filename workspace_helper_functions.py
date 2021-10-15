@@ -5,6 +5,7 @@ import time
 import json
 sys.path.append('..')
 from faser_math import fsr, tm
+from faser_utils.disp.disp import progressBar
 
 def filter_manipulability_at_threshold(results, score_threshold=0.5):
     """
@@ -23,6 +24,60 @@ def filter_manipulability_at_threshold(results, score_threshold=0.5):
         if result[1] > score_threshold:  # Should be range 0-1
             filtered_results.append(result)
     return filtered_results
+
+def find_bounds_workspace(work_space):
+    workspace_len = len(work_space)
+    x_min_dim, y_min_dim, z_min_dim = np.Inf, np.Inf, np.Inf
+    x_max_dim, y_max_dim, z_max_dim = -np.Inf, -np.Inf, -np.Inf
+    x_min_prox, y_min_prox, z_min_prox = np.Inf, np.Inf, np.Inf
+
+    for i in range(workspace_len):
+        progressBar(i, workspace_len - 1, prefix='Finding Workspace Bounds')
+        p = work_space[i][0]
+        if i < workspace_len - 1:
+            pn = work_space[i + 1][0]
+            if abs(p[0] - pn[0]) < x_min_prox and abs(p[0] - pn[0]) > .05:
+                x_min_prox = abs(p[0] - pn[0])
+            if abs(p[1] - pn[1]) < y_min_prox and abs(p[1] - pn[1]) > .05:
+                y_min_prox = abs(p[1] - pn[1])
+            if abs(p[2] - pn[2]) < z_min_prox and abs(p[2] - pn[2]) > .05:
+                z_min_prox = abs(p[2] - pn[2])
+        if p[0] < x_min_dim:
+            x_min_dim = p[0]
+        if p[1] < y_min_dim:
+            y_min_dim = p[1]
+        if p[2] < z_min_dim:
+            z_min_dim = p[2]
+        if p[0] > x_max_dim:
+            x_max_dim = p[0]
+        if p[1] > y_max_dim:
+            y_max_dim = p[1]
+        if p[2] > z_max_dim:
+            z_max_dim = p[2]
+
+    x_min = (x_min_dim * (1 / x_min_prox))
+    y_min = (y_min_dim * (1 / y_min_prox))
+    z_min = (z_min_dim * (1 / z_min_prox))
+    x_max = (x_max_dim * (1 / x_min_prox))
+    y_max = (y_max_dim * (1 / y_min_prox))
+    z_max = (z_max_dim * (1 / z_min_prox))
+    print('Creating Graph Skeleton')
+
+    if not np.isclose(x_min_prox, z_min_prox, 0.01) and not np.isclose(y_min_prox, z_min_prox):
+        print('Grid is not cubic')
+        print([x_min_prox, y_min_prox, z_min_prox])
+        return None, None, None
+
+    x_bound = int(np.ceil(x_max - x_min))
+    y_bound = int(np.ceil(y_max - y_min))
+    z_bound = int(np.ceil(z_max - z_min))
+
+    real_bounds = [
+        x_min_dim, x_max_dim, y_min_dim, y_max_dim, z_min_dim, z_max_dim
+    ]
+
+    bounds = [x_bound, y_bound, z_bound]
+    return real_bounds, bounds, (x_min_prox + y_min_prox + z_min_prox)/3
 
 def convert_to_json(results, json_file_name):
     """
