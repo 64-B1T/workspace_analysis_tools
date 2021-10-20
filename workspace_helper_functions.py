@@ -133,7 +133,7 @@ def convert_from_json(json_file_name):
 
 
 
-def score_point_div(score):
+def score_point(score):
     """
     Scores a point for use in plotting.
 

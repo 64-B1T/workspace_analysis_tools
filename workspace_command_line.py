@@ -66,6 +66,7 @@ valid_commands = [
     cmd_str_exit,
     cmd_str_load_robot,
     cmd_str_analyze_task_manipulability,
+    cmd_str_fuse_manipulability,
     cmd_str_analyze_total_workspace_exhaustive,
     cmd_str_analyze_total_workspace_alpha,
     cmd_str_analyze_unit_shell_manipulability,
@@ -343,6 +344,14 @@ class CommandExecutor:
         plt.show()
 
     def cmd_compare_manipulability_space(self, cmds):
+        """
+        Allows a user to fuse two manipulability analysis into a divergent manipulability analysis graph
+        Both manipulability analysis must have the same grid size in order for this function to work.
+        -f The first manipulability file
+        -f2 the second manipulability file
+        -o The destination file
+        -p whether or not to plot the resultant graph
+        """
         save_output, out_file_name = self.save_results_flag(cmds)
         file_1_name = post_flag(cmd_flag_input_file, cmds)
         file_2_name = post_flag(cmd_flag_input_file_2, cmds)
