@@ -1,12 +1,11 @@
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import numpy as np
+import workspace_constants
 import pickle
 from alpha_shape import AlphaShape
 from faser_utils.disp.disp import progressBar
 from workspace_helper_functions import score_point, sort_cloud
-
-TRANSPARENCY_CONSTANT = .7
 
 def view_workspace(image,
                   draw_alpha_shape=False,
@@ -59,7 +58,7 @@ def draw_square(point, dims, excluded=2, col='darkred', axis_2=None):
         zs = np.array([f, f, f, f])
         verts = [list(zip(xs, ys, zs))]
         axis_2.add_collection3d(
-            Poly3DCollection(verts, facecolors=col, alpha=TRANSPARENCY_CONSTANT))
+            Poly3DCollection(verts, facecolors=col, alpha=workspace_constants.TRANSPARENCY_CONSTANT))
     elif excluded == 1:
         vert_1 = point[0] - dims[0] / 2
         vert_2 = point[0] + dims[0] / 2
@@ -71,7 +70,7 @@ def draw_square(point, dims, excluded=2, col='darkred', axis_2=None):
         ys = np.array([f, f, f, f])
         verts = [list(zip(xs, ys, zs))]
         axis_2.add_collection3d(
-            Poly3DCollection(verts, facecolors=col, alpha=TRANSPARENCY_CONSTANT))
+            Poly3DCollection(verts, facecolors=col, alpha=workspace_constants.TRANSPARENCY_CONSTANT))
     elif excluded == 0:
         vert_1 = point[1] - dims[0] / 2
         vert_2 = point[1] + dims[0] / 2
@@ -83,7 +82,7 @@ def draw_square(point, dims, excluded=2, col='darkred', axis_2=None):
         xs = np.array([f, f, f, f])
         verts = [list(zip(xs, ys, zs))]
         axis_2.add_collection3d(
-            Poly3DCollection(verts, facecolors=col, alpha=TRANSPARENCY_CONSTANT))
+            Poly3DCollection(verts, facecolors=col, alpha=workspace_constants.TRANSPARENCY_CONSTANT))
 
 
 class WorkspaceViewer:
@@ -383,5 +382,5 @@ class WorkspaceViewer:
 
             arr = np.array(pruned)
         print('Processing Cloud')
-        alpha = AlphaShape(arr, 1.2)
+        alpha = AlphaShape(arr, workspace_constants.ALPHA_VALUE)
         alpha.draw(ax)

@@ -15,6 +15,7 @@ from faser_robot_kinematics import loadArmFromURDF
 from faser_utils.disp.disp import disp, progressBar
 
 #This Module Imports
+import workspace_constants
 from robot_link import RobotLink
 from alpha_shape import AlphaShape
 from workspace_analyzer import WorkspaceAnalyzer
@@ -22,18 +23,6 @@ from workspace_helper_functions import score_point, score_point_div, post_flag
 from workspace_helper_functions import load_point_cloud_from_file, sort_cloud
 from workspace_helper_functions import find_bounds_workspace
 from workspace_viewer import view_workspace
-
-#The ALPHA_VALUE is the alpha parameter which determines which points are included or
-# excluded to create an alpha shape. This is technically an optional parameter,
-# however when the alpha shape optimizes this itself, for large clouds of points
-# it can take many hours to reach a solution. 1.2 is a convenient constant tested on a variety
-# of robot sizes.
-ALPHA_VALUE = 1.2
-
-#The TRANSPARENCY_CONSTANT determines the degree of transparency at which 3d objects are shown
-# when plotted within matplotlib.
-TRANSPARENCY_CONSTANT = .5
-
 
 done = False
 
@@ -302,7 +291,7 @@ class CommandExecutor:
             col = score_point(1 - min)
             DrawRectangle(
                 tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
-                [grid_rez]*3, ax, c=col, a=TRANSPARENCY_CONSTANT)
+                [grid_rez]*3, ax, c=col, a=workspace_constants.TRANSPARENCY_CONSTANT)
         plt.show()
 
     def plot_reachability_space(self, pose_cloud):
@@ -313,7 +302,7 @@ class CommandExecutor:
         """
         plt.figure()
         ax = plt.axes(projection='3d')
-        alpha = AlphaShape(sort_cloud(pose_cloud), ALPHA_VALUE)
+        alpha = AlphaShape(sort_cloud(pose_cloud), workspace_constants.ALPHA_VALUE)
         my_cmap = plt.get_cmap('jet')
         ax.plot_trisurf(*zip(*alpha.verts),
             triangles=alpha.triangle_inds, cmap=my_cmap,alpha =.2, edgecolor='black')
@@ -340,7 +329,7 @@ class CommandExecutor:
                 col = score_point_div(score)
             DrawRectangle(
                 tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
-                [grid_rez]*3, ax, c=col, a=TRANSPARENCY_CONSTANT)
+                [grid_rez]*3, ax, c=col, a=workspace_constants.TRANSPARENCY_CONSTANT)
         plt.show()
 
     def cmd_compare_manipulability_space(self, cmds):
@@ -623,7 +612,7 @@ class CommandExecutor:
         if cmd_flag_object_bound_volume in cmds:
             shape_fname = post_flag(cmd_flag_object_bound_volume, cmds)
             with open(shape_fname, 'rb') as fp:
-                shape = AlphaShape(sort_cloud(pickle.load(fp)), ALPHA_VALUE)
+                shape = AlphaShape(sort_cloud(pickle.load(fp)), workspace_constants.ALPHA_VALUE)
         if cmd_flag_object_min_dist in cmds:
             min_dist = float(post_flag(cmd_flag_object_min_dist, cmds))
 
@@ -644,7 +633,7 @@ class CommandExecutor:
                 else:
                     col = score_point(score)
                     DrawRectangle(tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
-                        [.25] * 3, ax, c=col, a=TRANSPARENCY_CONSTANT)
+                        [.25] * 3, ax, c=col, a=workspace_constants.TRANSPARENCY_CONSTANT)
             drawMesh(mesh, ax)
             plt.show()
         self.pose_results_object_surface = results
@@ -670,18 +659,18 @@ class CommandExecutor:
         if self.exhaustive_pose_cloud is not None:
             res = input('Would you like to use prior calculated exhaustive pose cloud? Y/N >')
             if res.lower() == 'y':
-                shape = AlphaShape(sort_cloud(self.exhaustive_pose_cloud), ALPHA_VALUE)
+                shape = AlphaShape(sort_cloud(self.exhaustive_pose_cloud), workspace_constants.ALPHA_VALUE)
         if self.functional_pose_cloud is not None:
             res = input('Would you like to use prior calculated functional pose cloud? Y/N >')
             if res.lower() == 'y':
-                shape = AlphaShape(sort_cloud(self.functional_pose_cloud), ALPHA_VALUE)
+                shape = AlphaShape(sort_cloud(self.functional_pose_cloud), workspace_constants.ALPHA_VALUE)
 
         if shape is None:
             if cmd_flag_input_file in cmds:
                 shape_fname = post_flag(cmd_flag_input_file, cmds)
             with open(shape_fname, 'rb') as fp:
                 arr = sort_cloud(pickle.load(fp))
-            shape = AlphaShape(arr, ALPHA_VALUE)
+            shape = AlphaShape(arr, workspace_constants.ALPHA_VALUE)
         if shape is None:
             disp('This function requires an alpha shape cloud as an input\n' +
                 'Please either specify a .npy file name or run a pose cloud calculator')

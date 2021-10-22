@@ -7,6 +7,82 @@ sys.path.append('..')
 from faser_math import fsr, tm
 from faser_utils.disp.disp import progressBar
 
+def grid_cloud_within_volume(shape, resolution=.25):
+    """
+    Fill an alpha shape with a grid of points according to the resolution parameter.
+
+    Args:
+        resolution: how far (in meters) points should be from each other
+    Returns:
+        pruned_cloud: The section of the grid space that fits within the volume
+    """
+    bounds_x = shape.bounds[0]
+    bounds_y = shape.bounds[1]
+    bounds_z = shape.bounds[2]
+
+    def round_near(x, a):
+        return math.floor(x / a) * a
+
+    def gen_lin(bounds):  # Generate a linearly interpolated grid between minimum and maximum
+        # Bounds for the purposes of setting up a 3D grid
+        min_t = -round_near(abs(bounds[0]), resolution)
+        max_t = round_near(bounds[1], resolution)
+        step = (max_t - min_t) / resolution
+        return np.arange(min_t, max_t, resolution) #Changed to Arange to achieve desired steps
+
+    x_space = gen_lin(bounds_x).tolist()
+    y_space = gen_lin(bounds_y).tolist()
+    z_space = gen_lin(bounds_z).tolist()
+
+    # Construct point cloud by matching every combination of the created points
+    cloud_list = list(itertools.product(*[x_space, y_space, z_space]))
+    cloud = np.array(cloud_list)
+
+    #Prune Cloud by erasing points known to be outside the volume of the alpha shape
+    print('Initial Coud Size:' + str(len(cloud)))
+    pruned_cloud = inside_alpha_shape(shape, cloud)
+    print('Pruned Cloud Size:' + str(len(pruned_cloud)))
+    return pruned_cloud
+
+def ignore_close_points(seen_points, empty_results, test_point, minimum_dist):
+    """
+    Ignores a point too close to other close points
+
+    Args:
+        seen_points: List of already accepted points
+        empty_results: Empty results list representing rejected points
+        test_point: Point to check
+        minimum_dist: Minimum allowable distance between points
+
+    Returns:
+        type: boolean signalling whether or not to ignore, and a list of ingored point/results
+
+    """
+    continuance = False
+    #If we're ignoring the point, we do need to supply an empty result to not break later analysis
+    for point in seen_points:
+        if fsr.distance(point, test_point) < minimum_dist:
+            empty_results.append(process_empty(test_point))
+            continuance = True
+            break
+    return continuance, empty_results
+
+def gen_manip_sphere(manip_resolution):
+    """
+    Craft a manipulability sphere for use in testing manipulability resolution
+    Args:
+        manip_resolution: approximate number of points in sphere
+    Returns:
+        sphere: points in sphere
+        true_rez: the true number of points in the sphere
+    """
+    sphr, _ = fsr.unitSphere(manip_resolution)
+    sphr.append([0, 0, 0])
+    sphere = np.array(sphr) * np.pi
+    true_rez = len(sphere)
+    return sphere, true_rez
+
+
 def filter_manipulability_at_threshold(results, score_threshold=0.5):
     """
     Filter Manipulability At THreshold
