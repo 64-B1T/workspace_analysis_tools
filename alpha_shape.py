@@ -52,15 +52,17 @@ class AlphaShape:
             self.triangles = self.process_triangles()
         self.bounds = self.calculate_bounds()
 
-    def draw(self, ax, transparency=0.2):
+    def draw(self, ax, transparency=0.2, edgecolor='black'):
         """
         Draws the Alpha Shape.
         Args:
             ax: matplotlib axis to plot on
             transparency: optional parameter for transparency of resultant plot
+            edgecolor: optional color to give to edges, defaults to black.
         """
         ax.plot_trisurf(*zip(*self.verts),
-                        triangles=self.triangle_inds, alpha=transparency, edgecolor='black')
+                        triangles=self.triangle_inds, alpha=transparency,
+                        edgecolor=edgecolor)
 
     def process_triangles(self):
         """
@@ -77,7 +79,7 @@ class AlphaShape:
     def calculate_bounds(self):
         """
         Calculate the X, Y, and Z bounds of the resultant alpha shape
-        
+
         Returns:
             [[],[],[]]: X, Y, and Z bounds arranged by dimension, min and then max
         """

@@ -15,30 +15,21 @@ from faser_robot_kinematics import loadArmFromURDF
 from faser_utils.disp.disp import disp, progressBar
 
 #This Module Imports
+import workspace_constants
 from robot_link import RobotLink
 from alpha_shape import AlphaShape
 from workspace_analyzer import WorkspaceAnalyzer
-from workspace_helper_functions import score_point, post_flag
+from workspace_helper_functions import score_point, score_point_div, post_flag
 from workspace_helper_functions import load_point_cloud_from_file, sort_cloud
+from workspace_helper_functions import find_bounds_workspace
 from workspace_viewer import view_workspace
-
-#The ALPHA_VALUE is the alpha parameter which determines which points are included or
-# excluded to create an alpha shape. This is technically an optional parameter,
-# however when the alpha shape optimizes this itself, for large clouds of points
-# it can take many hours to reach a solution. 1.2 is a convenient constant tested on a variety
-# of robot sizes.
-ALPHA_VALUE = 1.2
-
-#The TRANSPARENCY_CONSTANT determines the degree of transparency at which 3d objects are shown
-# when plotted within matplotlib.
-TRANSPARENCY_CONSTANT = .5
-
 
 done = False
 
 cmd_str_help = 'help'
 cmd_str_exit = 'exit'
 cmd_str_load_robot = 'loadRobot'
+cmd_str_fuse_manipulability = 'fuseManipulabilityFiles'
 cmd_str_analyze_task_manipulability = 'analyzeTaskSpaceManipulability'
 cmd_str_analyze_total_workspace_exhaustive = 'exhaustiveMethodTotalWorkspace'
 cmd_str_analyze_total_workspace_alpha = 'alphaMethodTotalWorkspace'
@@ -64,6 +55,7 @@ valid_commands = [
     cmd_str_exit,
     cmd_str_load_robot,
     cmd_str_analyze_task_manipulability,
+    cmd_str_fuse_manipulability,
     cmd_str_analyze_total_workspace_exhaustive,
     cmd_str_analyze_total_workspace_alpha,
     cmd_str_analyze_unit_shell_manipulability,
@@ -86,6 +78,7 @@ valid_commands = [
 # General_Flags
 cmd_flag_save_results = '-o'
 cmd_flag_input_file = '-f'
+cmd_flag_input_file_2 = '-f2'
 cmd_flag_num_iters = '-numIterations'
 cmd_flag_plot_results = '-plot'
 cmd_flag_parallel = '-parallel'
@@ -298,7 +291,7 @@ class CommandExecutor:
             col = score_point(1 - min)
             DrawRectangle(
                 tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
-                [grid_rez]*3, ax, c=col, a=TRANSPARENCY_CONSTANT)
+                [grid_rez]*3, ax, c=col, a=workspace_constants.TRANSPARENCY_CONSTANT)
         plt.show()
 
     def plot_reachability_space(self, pose_cloud):
@@ -309,19 +302,20 @@ class CommandExecutor:
         """
         plt.figure()
         ax = plt.axes(projection='3d')
-        alpha = AlphaShape(sort_cloud(pose_cloud), ALPHA_VALUE)
+        alpha = AlphaShape(sort_cloud(pose_cloud), workspace_constants.ALPHA_VALUE)
         my_cmap = plt.get_cmap('jet')
         ax.plot_trisurf(*zip(*alpha.verts),
             triangles=alpha.triangle_inds, cmap=my_cmap,alpha =.2, edgecolor='black')
         plt.show()
 
-    def plot_manipulability_grid(self, results, grid_rez):
+    def plot_manipulability_grid(self, results, grid_rez, type = 1):
         """
         Plots a manipulability grid given results and a grid resolution
 
         Args:
             results: Results list
             grid_rez: grid resolution, in meters
+            type: type of manipulability grid to plot. 1 is standard, 2 is fused
         """
         plt.figure()
         ax = plt.axes(projection='3d')
@@ -330,11 +324,121 @@ class CommandExecutor:
         ax.set_zlim3d(-4,4)
         for r in results:
             score = r[1]
-            col = score_point(score)
+            if type == 1:
+                col = score_point(score)
+            elif type == 2:
+                col = score_point_div(score)
             DrawRectangle(
                 tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
-                [grid_rez]*3, ax, c=col, a=TRANSPARENCY_CONSTANT)
+                [grid_rez]*3, ax, c=col, a=workspace_constants.TRANSPARENCY_CONSTANT)
         plt.show()
+
+    def cmd_compare_manipulability_space(self, cmds):
+        """
+        Allows a user to fuse two manipulability analysis into a divergent manipulability analysis graph
+        Both manipulability analysis must have the same grid size in order for this function to work.
+        -f The first manipulability file
+        -f2 the second manipulability file
+        -o The destination file
+        -p whether or not to plot the resultant graph
+        """
+        save_output, out_file_name = self.save_results_flag(cmds)
+        file_1_name = post_flag(cmd_flag_input_file, cmds)
+        file_2_name = post_flag(cmd_flag_input_file_2, cmds)
+
+        def open_work_space(workspace_file_name):
+            with open(workspace_file_name, 'rb') as fp:
+                work_space = pickle.load(fp)
+            return work_space
+
+        work_space_1 = open_work_space(file_1_name)
+        work_space_2 = open_work_space(file_2_name)
+        workspace_len_1 = len(work_space_1)
+        workspace_len_2 = len(work_space_2)
+
+        real_bounds_a, bounds_a, gza = find_bounds_workspace(work_space_1)
+        real_bounds_b, bounds_b, gzb = find_bounds_workspace(work_space_2)
+
+        if not np.isclose(gza, gzb, 0.001):
+            print('Grid sizes are incompatible')
+            return
+        if gza is None or gzb is None:
+            if gza is None:
+                print('Workspace 1 grid is not cubic')
+            else:
+                print('Workspace 2 grid is not cubic')
+            return
+
+        grid = np.round((gza + gzb) / 2, 5)
+        counters_min_a = np.array([real_bounds_a[0],
+            real_bounds_a[2], real_bounds_a[4]]) * (1 / grid)
+        counters_min_b = np.array([real_bounds_b[0],
+            real_bounds_b[2], real_bounds_b[4]]) * (1 / grid)
+
+        # Build Counter Grid
+        counters_max = [0, 0, 0]
+        counters_max[0] = max(bounds_a[0], bounds_b[0]) + 1
+        counters_max[1] = max(bounds_a[1], bounds_b[1]) + 1
+        counters_max[2] = max(bounds_a[2], bounds_b[2]) + 1
+
+        # Create the Points Array
+        point_counter = 0
+        total_grid_points = counters_max[0] * counters_max[1] * counters_max[2]
+        points_array = []
+        for i in range(counters_max[0]):
+            # Generating this in a single line caused object duplication issues
+            points_array.append([])
+            for j in range(counters_max[1]):
+                points_array[i].append([])
+                for k in range(counters_max[2]):
+                    point_counter += 1
+                    progressBar(
+                        'generating grid array',
+                        point_counter, total_grid_points)
+                    points_array[i][j].append([-1, -1])
+
+        def place_point_in_grid(point, point_index, mins):
+            p = point[0]
+            xind = int(round(-mins[0] + (p[0] * (1 / grid))))
+            yind = int(round(-mins[1] + (p[1] * (1 / grid))))
+            zind = int(round(-mins[2] + (p[2] * (1 / grid))))
+
+            points_array[xind][yind][zind][point_index]=point
+
+        # Organize Points Based on Grid Coordinate
+        for f in range(workspace_len_1):
+            place_point_in_grid(work_space_1[f], 0, counters_min_a)
+        for f in range(workspace_len_2):
+            place_point_in_grid(work_space_2[f], 1, counters_min_b)
+
+        new_point_list = []
+        # Finish Synthesis of Points in Grid
+        for i in range(counters_max[0]):
+            for j in range(counters_max[1]):
+                for k in range(counters_max[2]):
+                    sub = points_array[i][j][k]
+                    r = 0.5
+                    new_list_count+=1
+                    if not isinstance(sub[0], list) and not isinstance(sub[1], list):
+                        continue
+                    if not isinstance(sub[0], list):
+                        r = 0.5 + sub[1][1]/2
+                        sub[1][1] = r
+                        new_point_list.append(sub[1])
+                    elif not isinstance(sub[1], list):
+                        r = 0.5 - sub[0][1]/2
+                        sub[0][1] = r
+                        new_point_list.append(sub[0])
+                    else:
+                        r = 0.5 + sub[1][1]/2 - sub[0][1]/2
+                        sub[1][1] = r
+                        new_point_list.append(sub[1])
+
+        plot = cmd_flag_plot_results in cmds
+        if plot:
+            self.plot_manipulability_grid(new_point_list, 0.1, 2)
+        if save_output:
+            self.save_to_file(new_point_list, out_file_name)
 
     def cmd_analyze_task_manipulability(self, cmds):
         """
@@ -510,7 +614,7 @@ class CommandExecutor:
         if cmd_flag_object_bound_volume in cmds:
             shape_fname = post_flag(cmd_flag_object_bound_volume, cmds)
             with open(shape_fname, 'rb') as fp:
-                shape = AlphaShape(sort_cloud(pickle.load(fp)), ALPHA_VALUE)
+                shape = AlphaShape(sort_cloud(pickle.load(fp)), workspace_constants.ALPHA_VALUE)
         if cmd_flag_object_min_dist in cmds:
             min_dist = float(post_flag(cmd_flag_object_min_dist, cmds))
 
@@ -531,7 +635,7 @@ class CommandExecutor:
                 else:
                     col = score_point(score)
                     DrawRectangle(tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
-                        [.25] * 3, ax, c=col, a=TRANSPARENCY_CONSTANT)
+                        [.25] * 3, ax, c=col, a=workspace_constants.TRANSPARENCY_CONSTANT)
             drawMesh(mesh, ax)
             plt.show()
         self.pose_results_object_surface = results
@@ -557,18 +661,18 @@ class CommandExecutor:
         if self.exhaustive_pose_cloud is not None:
             res = input('Would you like to use prior calculated exhaustive pose cloud? Y/N >')
             if res.lower() == 'y':
-                shape = AlphaShape(sort_cloud(self.exhaustive_pose_cloud), ALPHA_VALUE)
+                shape = AlphaShape(sort_cloud(self.exhaustive_pose_cloud), workspace_constants.ALPHA_VALUE)
         if self.functional_pose_cloud is not None:
             res = input('Would you like to use prior calculated functional pose cloud? Y/N >')
             if res.lower() == 'y':
-                shape = AlphaShape(sort_cloud(self.functional_pose_cloud), ALPHA_VALUE)
+                shape = AlphaShape(sort_cloud(self.functional_pose_cloud), workspace_constants.ALPHA_VALUE)
 
         if shape is None:
             if cmd_flag_input_file in cmds:
                 shape_fname = post_flag(cmd_flag_input_file, cmds)
             with open(shape_fname, 'rb') as fp:
                 arr = sort_cloud(pickle.load(fp))
-            shape = AlphaShape(arr, ALPHA_VALUE)
+            shape = AlphaShape(arr, workspace_constants.ALPHA_VALUE)
         if shape is None:
             disp('This function requires an alpha shape cloud as an input\n' +
                 'Please either specify a .npy file name or run a pose cloud calculator')
@@ -928,6 +1032,8 @@ class CommandExecutor:
             return self.cmd_analyze_brute_manipulability(cmds_parsed)
         elif cmds_parsed[0] == cmd_str_manipulability_over_trajectory_cloud:
             return self.cmd_analyze_point_cloud_with_trajectory(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_fuse_manipulability:
+            return self.cmd_compare_manipulabiltity_space(cmds_parsed)
 
 
 class WorkspaceCommandLine(CommandExecutor):
@@ -1070,6 +1176,8 @@ class WorkspaceCommandLine(CommandExecutor):
                 disp(self.cmd_view_manipulability_space.__doc__)
             elif cmds[1] == cmd_str_brute_manipulability:
                 disp(self.cmd_analyze_brute_manipulability.__doc__)
+            elif cmds[1] == cmd_str_fuse_manipulability:
+                disp(self.cmd_compare_manipulability_space.__doc__)
         else:
             disp('\nhelp [cmd] for details\nValid Commands:')
             for command in valid_commands:

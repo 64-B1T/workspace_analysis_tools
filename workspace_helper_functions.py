@@ -5,6 +5,83 @@ import time
 import json
 sys.path.append('..')
 from faser_math import fsr, tm
+from faser_utils.disp.disp import progressBar
+
+def grid_cloud_within_volume(shape, resolution=.25):
+    """
+    Fill an alpha shape with a grid of points according to the resolution parameter.
+
+    Args:
+        resolution: how far (in meters) points should be from each other
+    Returns:
+        pruned_cloud: The section of the grid space that fits within the volume
+    """
+    bounds_x = shape.bounds[0]
+    bounds_y = shape.bounds[1]
+    bounds_z = shape.bounds[2]
+
+    def round_near(x, a):
+        return math.floor(x / a) * a
+
+    def gen_lin(bounds):  # Generate a linearly interpolated grid between minimum and maximum
+        # Bounds for the purposes of setting up a 3D grid
+        min_t = -round_near(abs(bounds[0]), resolution)
+        max_t = round_near(bounds[1], resolution)
+        step = (max_t - min_t) / resolution
+        return np.arange(min_t, max_t, resolution) #Changed to Arange to achieve desired steps
+
+    x_space = gen_lin(bounds_x).tolist()
+    y_space = gen_lin(bounds_y).tolist()
+    z_space = gen_lin(bounds_z).tolist()
+
+    # Construct point cloud by matching every combination of the created points
+    cloud_list = list(itertools.product(*[x_space, y_space, z_space]))
+    cloud = np.array(cloud_list)
+
+    #Prune Cloud by erasing points known to be outside the volume of the alpha shape
+    print('Initial Coud Size:' + str(len(cloud)))
+    pruned_cloud = inside_alpha_shape(shape, cloud)
+    print('Pruned Cloud Size:' + str(len(pruned_cloud)))
+    return pruned_cloud
+
+def ignore_close_points(seen_points, empty_results, test_point, minimum_dist):
+    """
+    Ignores a point too close to other close points
+
+    Args:
+        seen_points: List of already accepted points
+        empty_results: Empty results list representing rejected points
+        test_point: Point to check
+        minimum_dist: Minimum allowable distance between points
+
+    Returns:
+        type: boolean signalling whether or not to ignore, and a list of ingored point/results
+
+    """
+    continuance = False
+    #If we're ignoring the point, we do need to supply an empty result to not break later analysis
+    for point in seen_points:
+        if fsr.distance(point, test_point) < minimum_dist:
+            empty_results.append(process_empty(test_point))
+            continuance = True
+            break
+    return continuance, empty_results
+
+def gen_manip_sphere(manip_resolution):
+    """
+    Craft a manipulability sphere for use in testing manipulability resolution
+    Args:
+        manip_resolution: approximate number of points in sphere
+    Returns:
+        sphere: points in sphere
+        true_rez: the true number of points in the sphere
+    """
+    sphr, _ = fsr.unitSphere(manip_resolution)
+    sphr.append([0, 0, 0])
+    sphere = np.array(sphr) * np.pi
+    true_rez = len(sphere)
+    return sphere, true_rez
+
 
 def filter_manipulability_at_threshold(results, score_threshold=0.5):
     """
@@ -23,6 +100,60 @@ def filter_manipulability_at_threshold(results, score_threshold=0.5):
         if result[1] > score_threshold:  # Should be range 0-1
             filtered_results.append(result)
     return filtered_results
+
+def find_bounds_workspace(work_space):
+    workspace_len = len(work_space)
+    x_min_dim, y_min_dim, z_min_dim = np.Inf, np.Inf, np.Inf
+    x_max_dim, y_max_dim, z_max_dim = -np.Inf, -np.Inf, -np.Inf
+    x_min_prox, y_min_prox, z_min_prox = np.Inf, np.Inf, np.Inf
+
+    for i in range(workspace_len):
+        progressBar(i, workspace_len - 1, prefix='Finding Workspace Bounds')
+        p = work_space[i][0]
+        if i < workspace_len - 1:
+            pn = work_space[i + 1][0]
+            if abs(p[0] - pn[0]) < x_min_prox and abs(p[0] - pn[0]) > .05:
+                x_min_prox = abs(p[0] - pn[0])
+            if abs(p[1] - pn[1]) < y_min_prox and abs(p[1] - pn[1]) > .05:
+                y_min_prox = abs(p[1] - pn[1])
+            if abs(p[2] - pn[2]) < z_min_prox and abs(p[2] - pn[2]) > .05:
+                z_min_prox = abs(p[2] - pn[2])
+        if p[0] < x_min_dim:
+            x_min_dim = p[0]
+        if p[1] < y_min_dim:
+            y_min_dim = p[1]
+        if p[2] < z_min_dim:
+            z_min_dim = p[2]
+        if p[0] > x_max_dim:
+            x_max_dim = p[0]
+        if p[1] > y_max_dim:
+            y_max_dim = p[1]
+        if p[2] > z_max_dim:
+            z_max_dim = p[2]
+
+    x_min = (x_min_dim * (1 / x_min_prox))
+    y_min = (y_min_dim * (1 / y_min_prox))
+    z_min = (z_min_dim * (1 / z_min_prox))
+    x_max = (x_max_dim * (1 / x_min_prox))
+    y_max = (y_max_dim * (1 / y_min_prox))
+    z_max = (z_max_dim * (1 / z_min_prox))
+    print('Creating Graph Skeleton')
+
+    if not np.isclose(x_min_prox, z_min_prox, 0.01) and not np.isclose(y_min_prox, z_min_prox):
+        print('Grid is not cubic')
+        print([x_min_prox, y_min_prox, z_min_prox])
+        return None, None, None
+
+    x_bound = int(np.ceil(x_max - x_min))
+    y_bound = int(np.ceil(y_max - y_min))
+    z_bound = int(np.ceil(z_max - z_min))
+
+    real_bounds = [
+        x_min_dim, x_max_dim, y_min_dim, y_max_dim, z_min_dim, z_max_dim
+    ]
+
+    bounds = [x_bound, y_bound, z_bound]
+    return real_bounds, bounds, (x_min_prox + y_min_prox + z_min_prox)/3
 
 def convert_to_json(results, json_file_name):
     """
@@ -107,6 +238,39 @@ def score_point(score):
     elif score > .1:
         col = 'red'
     return col
+
+def score_point_div(score):
+    """
+    Scores a point for use in plotting.
+
+    Args:
+        score: float score of point
+    Returns:
+        color: matplotlib color
+    """
+    col = 'darkviolet'
+    if score > .9:
+        col = 'limegreen'
+    elif score > .8:
+        col = 'green'
+    elif score > .7:
+        col = 'mediumseagreen'
+    elif score < .1:
+        col = 'darkred'
+    elif score < .2:
+        col = 'red'
+    elif score < .3:
+        col = 'orangered'
+    elif score > .6:
+        col = 'teal'
+    elif score < .4:
+        col = 'chocolate'
+    elif score > .55:
+        col =  'darkslategray'
+    elif score < .45:
+        col = 'saddlebrown'
+    return col
+
 
 def complete_trajectory(point_list, point_interpolation_dist, point_interpolation_mode):
     """
