@@ -16,7 +16,7 @@ def moller_trumbore_ray_intersection(origin_point,
     Args:
         origin_point: the point at which the ray originates
         triangle: List of three points in 3D space denoting a triangle
-        ray_dir = Optional List of three points denoting a unit vector/ray
+        ray_dir: Optional List of three points denoting a unit vector/ray
     Returns:
         Boolean for whether or not the ray intersects the triangle
     """
@@ -47,9 +47,10 @@ def moller_trumbore_ray_intersection(origin_point,
         return False
 
     t = f * np.dot(edge_2, q)
-    if t > workspace_constants.EPSILON:
-        return True
-    return False
+    if t <= workspace_constants.EPSILON:
+        return False
+
+    return True
 
 
 def moller_trumbore_ray_intersection_array(points,
@@ -61,7 +62,7 @@ def moller_trumbore_ray_intersection_array(points,
     Args:
         points: A list of points to test on the algorithm
         triangle: List of three points in 3D space denoting a triangle
-        ray = Optional array of three points denoting a unit vector/ray
+        ray: Optional array of three points denoting a unit vector/ray
     Returns:
         Numpy array of booleans for which corresponding points intersect the
             triangle
@@ -157,19 +158,20 @@ def inside_alpha_shape(shape, points, check_bounds=True):
     def isodd(x):
         return x % 2 != 0
 
+    num_points = len(points)
+    if num_points < 1:
+        # Attempted to analyze empty point set
+        return []
+
     inside_alpha = []
     if check_bounds:
-        #Before we start moller_trumbore, eliminate any points that are outside of the known bounds
-        num_points = len(points)
+        # Before we start moller_trumbore, eliminate any points that are outside of the known bounds
         i = 0
-        if num_points < 1:
-            # Attempted to analyze empty point set
-            return []
         if num_points == 1:
             if (points[0][0] < bounds[0][0] or points[0][0] > bounds[0][1]
                     or points[0][1] < bounds[1][0] or points[0][1] > bounds[1][1]
                     or points[0][2] < bounds[2][0] or points[0][2] > bounds[2][1]):
-                # Erasure by continuing
+                # If the point is outside of the bounds, return the empty set.
                 return []
             inside_alpha.append(points[0])
         else:
@@ -195,7 +197,7 @@ def inside_alpha_shape(shape, points, check_bounds=True):
     inside = []
     i = 0
     num_intersections = np.zeros(len(points))
-    #Individually process each triangle trhough Moller trumbore, as one would trial line segments
+    #Individually process each triangle through Moller trumbore, as one would trial line segments
     #   in the point-in-polygon problem.
     for tri in triangles:
         progressBar(i, num_tri - 1, prefix='Running Moller Trumbore     ')

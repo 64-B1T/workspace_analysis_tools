@@ -58,6 +58,7 @@ class AlphaShape:
         Args:
             ax: matplotlib axis to plot on
             transparency: optional parameter for transparency of resultant plot
+            edgecolor: optional color to give to edges, defaults to black.
         """
         ax.plot_trisurf(*zip(*self.verts),
                         triangles=self.triangle_inds, alpha=transparency,

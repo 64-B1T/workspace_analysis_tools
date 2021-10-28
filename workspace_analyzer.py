@@ -15,6 +15,7 @@ from alpha_shape import AlphaShape
 from workspace_helper_functions import WaitText, wait_for, complete_trajectory
 from workspace_helper_functions import ignore_close_points, gen_manip_sphere
 from workspace_helper_functions import grid_cloud_within_volume
+
 from moller_trumbore import moller_trumbore_ray_intersection, moller_trumbore_ray_intersection_array
 from moller_trumbore import chunk_moller_trumbore, inside_alpha_shape, alpha_intersection
 
@@ -750,16 +751,13 @@ class WorkspaceAnalyzer:
 
                     array_temp = np.array(point_list)
                     array_filtered = np.unique(array_temp.round(decimals=self.unique_decimals), axis=0)
-                    #Could potentially implement the point exclusion section
+                    # Could potentially implement the point exclusion section
                     ashape = AlphaShape(array_filtered, self.alpha_value)
                     verts = ashape.verts
-                    #local_cloud = []
                     local_cloud = [tm([v[0], v[1], v[2], 0, 0, 0]) for v in verts]
-                    #for vert in verts:
-                    #    local_cloud.append(tm([vert[0], vert[1], vert[2], 0,0,0]))
                 except:
-                    #Failure in case of insufficient dimensionality of arm will result in the alpha shape
-                    #Generator to fail, 3
+                    # Failure in case of insufficient dimensionality of arm will result in the alpha shape
+                    # Generator to fail, 3
                     print("Insufficient Dimensions in Arm, Trying Next DOF")
             for i in range(num_spread):
                 theta_list[dof_iter] = joint_configurations[i]

@@ -315,6 +315,7 @@ class CommandExecutor:
         Args:
             results: Results list
             grid_rez: grid resolution, in meters
+            type: type of manipulability grid to plot. 1 is standard, 2 is fused
         """
         plt.figure()
         ax = plt.axes(projection='3d')
@@ -374,17 +375,18 @@ class CommandExecutor:
         counters_min_b = np.array([real_bounds_b[0],
             real_bounds_b[2], real_bounds_b[4]]) * (1 / grid)
 
-        #Build Counter Grid
+        # Build Counter Grid
         counters_max = [0, 0, 0]
         counters_max[0] = max(bounds_a[0], bounds_b[0]) + 1
         counters_max[1] = max(bounds_a[1], bounds_b[1]) + 1
         counters_max[2] = max(bounds_a[2], bounds_b[2]) + 1
 
-        #Create the Points Array
+        # Create the Points Array
         point_counter = 0
         total_grid_points = counters_max[0] * counters_max[1] * counters_max[2]
         points_array = []
-        for i in range(counters_max[0]): #Generating this in a single line caused object duplication issues
+        for i in range(counters_max[0]):
+            # Generating this in a single line caused object duplication issues
             points_array.append([])
             for j in range(counters_max[1]):
                 points_array[i].append([])
@@ -403,14 +405,14 @@ class CommandExecutor:
 
             points_array[xind][yind][zind][point_index]=point
 
-        #Organize Points Based on Grid Coordinate
+        # Organize Points Based on Grid Coordinate
         for f in range(workspace_len_1):
             place_point_in_grid(work_space_1[f], 0, counters_min_a)
         for f in range(workspace_len_2):
             place_point_in_grid(work_space_2[f], 1, counters_min_b)
 
         new_point_list = []
-        #Finish Synthesis of Points in Grid
+        # Finish Synthesis of Points in Grid
         for i in range(counters_max[0]):
             for j in range(counters_max[1]):
                 for k in range(counters_max[2]):

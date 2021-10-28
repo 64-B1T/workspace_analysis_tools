@@ -255,26 +255,20 @@ def score_point_div(score):
         col = 'green'
     elif score > .7:
         col = 'mediumseagreen'
-
     elif score < .1:
         col = 'darkred'
     elif score < .2:
         col = 'red'
     elif score < .3:
         col = 'orangered'
-
     elif score > .6:
         col = 'teal'
-
     elif score < .4:
         col = 'chocolate'
-
     elif score > .55:
         col =  'darkslategray'
-
     elif score < .45:
         col = 'saddlebrown'
-
     return col
 
 

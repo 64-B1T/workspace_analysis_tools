@@ -8,7 +8,7 @@ UNIQUE_DECIMALS = 2  # Decimal places to filter out for uniqueness in Alpha Shap
 # Insufficient DOF OFFSET can result in the alpha shape reachability solver failing.
 DOF_OFFSET = 9
 
-#The ALPHA_VALUE is the alpha parameter  which determines which points are included or
+#The ALPHA_VALUE is the alpha parameter which determines which points are included or
 # excluded to create an alpha shape. This is technically an optional parameter,
 # however when the alpha shape optimizes this itself, for large clouds of points
 # it can take many hours to reach a solution. 1.2 is a convenient constant tested on a variety
