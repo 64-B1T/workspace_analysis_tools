@@ -9,10 +9,10 @@ import pickle
 import sys
 
 #Other Module Imports
-from faser_math import tm
-from faser_plotting.Draw.Draw import DrawRectangle, DrawAxes, drawMesh
-from faser_robot_kinematics import loadArmFromURDF
-from faser_utils.disp.disp import disp, progressBar
+from basic_robotics.general import tm
+from basic_robotics.plotting.Draw import DrawRectangle, DrawAxes, drawMesh
+from basic_robotics.kinematics import loadArmFromURDF
+from basic_robotics.utilities.disp import disp, progressBar
 
 #This Module Imports
 import workspace_constants

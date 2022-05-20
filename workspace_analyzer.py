@@ -20,10 +20,9 @@ from moller_trumbore import moller_trumbore_ray_intersection, moller_trumbore_ra
 from moller_trumbore import chunk_moller_trumbore, inside_alpha_shape, alpha_intersection
 
 # Other module imports
-sys.path.append('../')
-from robot_collisions import createMesh, ColliderManager, ColliderArm, ColliderObstacles
-from faser_math import tm, fsr
-from faser_utils.disp.disp import disp, progressBar
+from basic_robotics.robot_collisions import createMesh, ColliderManager, ColliderArm, ColliderObstacles
+from basic_robotics.general import tm, fsr
+from basic_robotics.utilities.disp import disp, progressBar
 
 # Helper Functions That You Probably Shouldn't Need To Call Directly
 def optimize_robot_for_goals(build_robot, goals_list, init=None):

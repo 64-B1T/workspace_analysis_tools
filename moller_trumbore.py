@@ -1,9 +1,7 @@
 import numpy as np
 import workspace_constants
 from alpha_shape import AlphaShape
-from faser_utils.disp.disp import disp, progressBar
-
-
+from basic_robotics.utilities.disp import disp, progressBar
 
 MOLLER_BIAS = np.pi/1000 #Arbitrary Small Amount
 MOLLER_RAY = np.array([MOLLER_BIAS, 2 * MOLLER_BIAS, 1 - 3 * MOLLER_BIAS])

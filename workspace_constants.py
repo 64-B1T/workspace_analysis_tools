@@ -6,7 +6,7 @@ UNIQUE_DECIMALS = 2  # Decimal places to filter out for uniqueness in Alpha Shap
 # Number of DOF from the End Effector assumed to be capable of creating a 3d shape
 # Through varying of the last n DOF and tracking End Effector coordinates.
 # Insufficient DOF OFFSET can result in the alpha shape reachability solver failing.
-DOF_OFFSET = 9
+DOF_OFFSET = 3
 
 #The ALPHA_VALUE is the alpha parameter which determines which points are included or
 # excluded to create an alpha shape. This is technically an optional parameter,

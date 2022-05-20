@@ -3,9 +3,8 @@ import sys
 import pickle
 import time
 import json
-sys.path.append('..')
-from faser_math import fsr, tm
-from faser_utils.disp.disp import progressBar
+from basic_robotics.general import fsr, tm
+from basic_robotics.utilities.disp import progressBar
 
 def grid_cloud_within_volume(shape, resolution=.25):
     """

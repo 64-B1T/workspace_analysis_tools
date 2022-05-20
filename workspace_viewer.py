@@ -4,8 +4,8 @@ import numpy as np
 import workspace_constants
 import pickle
 from alpha_shape import AlphaShape
-from faser_utils.disp.disp import progressBar
 from workspace_helper_functions import score_point, sort_cloud
+from basic_robotics.utilities.disp import progressBar
 
 def view_workspace(image,
                   draw_alpha_shape=False,
