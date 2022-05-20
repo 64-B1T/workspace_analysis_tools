@@ -8,7 +8,7 @@ HERE = pathlib.Path(__file__).parent
 README = (HERE / "README.md").read_text()
 
 setup(name='basic_robotics_workspace',
-      version='0.0.8',
+      version='0.0.9',
       long_description=README,
       long_description_content_type='text/markdown',
       description='Workspace Analysis Tool Developed In Concert With Basic Robotics',

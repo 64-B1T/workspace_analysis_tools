@@ -131,6 +131,12 @@ cmd_flag_brute_excluded = '-exclude'
 cmd_flag_point_traj_cloud = '-pointCloud'
 cmd_flag_point_traj_trajectory = '-trajectory'
 
+#Variable Modification Flags
+cmd_flag_var_unique_decimals = 'uniqueDecimals'
+cmd_flag_var_dof_offset = '-dofOffset'
+cmd_flag_var_alpha_value = '-alphaVal'
+cmd_flag_var_max_dist = '-maxDist'
+
 class CommandExecutor:
     """Superclass for workspace command line, to enable use in other applications more easily"""
 

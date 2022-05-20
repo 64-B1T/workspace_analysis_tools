@@ -119,6 +119,7 @@ def filter_manipulability_at_threshold(results, score_threshold=0.5):
             filtered_results.append(result)
     return filtered_results
 
+
 def find_bounds_workspace(work_space):
     workspace_len = len(work_space)
     x_min_dim, y_min_dim, z_min_dim = np.Inf, np.Inf, np.Inf
@@ -198,6 +199,7 @@ def convert_to_json(results, json_file_name):
         with open(json_file_name, 'w') as json_file:
             json.dump(json_dict, json_file)
 
+
 def convert_from_json(json_file_name):
     """
     Convert results from a json file into something useable
@@ -226,7 +228,6 @@ def convert_from_json(json_file_name):
         result.append(thetas)
         results.append(result)
     return results
-
 
 
 def score_point(score):
@@ -287,7 +288,7 @@ def score_point_div(score):
     elif score < .4:
         col = 'chocolate'
     elif score > .55:
-        col =  'darkslategray'
+        col = 'darkslategray'
     elif score < .45:
         col = 'saddlebrown'
     return col
@@ -325,14 +326,15 @@ def complete_trajectory(point_list, point_interpolation_dist, point_interpolatio
                 # 'arced' trajectory from waypoints A to B
                 if point_interpolation_mode == 1:
                     start_point = fsr.closeLinearGap(start_point, end_point,
-                            point_interpolation_dist)
+                                                     point_interpolation_dist)
                 else:
                     start_point = fsr.closeArcGap(start_point, end_point,
-                            point_interpolation_dist)
+                                                  point_interpolation_dist)
                 distance = fsr.arcDistance(start_point, end_point)
                 new_points.append(start_point)
         point_list = new_points
     return point_list
+
 
 def load_point_cloud_from_file(fname):
     """
@@ -346,10 +348,9 @@ def load_point_cloud_from_file(fname):
     def safe_float(val):
         if 'np.pi/' in val:
             return np.pi/float(val[6:])
-        elif 'np.pi*' in val:
+        if 'np.pi*' in val:
             return np.pi/float(val[6:])
-        else:
-            return float(val)
+        return float(val)
 
     with open(fname, 'r') as f_handle:
         lines = f_handle.readlines()
@@ -388,6 +389,7 @@ def sort_cloud(cloud):
     array_to_process = np.array(list_array_input)
     processed_array = np.unique(array_to_process.round(decimals=1), axis=0)
     return processed_array
+
 
 def wait_for(result, message):
     """

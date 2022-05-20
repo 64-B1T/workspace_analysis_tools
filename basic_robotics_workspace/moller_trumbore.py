@@ -3,8 +3,9 @@ import workspace_constants
 from alpha_shape import AlphaShape
 from basic_robotics.utilities.disp import progressBar
 
-MOLLER_BIAS = np.pi/1000 #Arbitrary Small Amount
+MOLLER_BIAS = np.pi/1000  # Arbitrary Small Amount
 MOLLER_RAY = np.array([MOLLER_BIAS, 2 * MOLLER_BIAS, 1 - 3 * MOLLER_BIAS])
+
 
 def moller_trumbore_ray_intersection(origin_point,
                                      triangle,
@@ -195,7 +196,7 @@ def inside_alpha_shape(shape, points, check_bounds=True):
     inside = []
     i = 0
     num_intersections = np.zeros(len(points))
-    #Individually process each triangle through Moller trumbore, as one would trial line segments
+    # Individually process each triangle through Moller trumbore, as one would trial line segments
     #   in the point-in-polygon problem.
     for tri in triangles:
         progressBar(i, num_tri - 1, prefix='Running Moller Trumbore     ')
