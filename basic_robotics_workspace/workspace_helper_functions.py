@@ -1,10 +1,24 @@
-import numpy as np
 import sys
-import pickle
 import time
 import json
+import math
+import itertools
+import numpy as np
 from basic_robotics.general import fsr, tm
 from basic_robotics.utilities.disp import progressBar
+from moller_trumbore import inside_alpha_shape
+
+
+def process_empty(p):
+    """
+    Helper function for multiprocessing. Literally returns empty.
+    Args:
+        p: Point
+    Returns:
+        [p, 0, [], [], []]
+    """
+    return [p, 0, [], [], []]
+
 
 def grid_cloud_within_volume(shape, resolution=.25):
     """
@@ -22,12 +36,13 @@ def grid_cloud_within_volume(shape, resolution=.25):
     def round_near(x, a):
         return math.floor(x / a) * a
 
-    def gen_lin(bounds):  # Generate a linearly interpolated grid between minimum and maximum
+    def gen_lin(bounds):
+        # Generate a linearly interpolated grid between minimum and maximum
         # Bounds for the purposes of setting up a 3D grid
         min_t = -round_near(abs(bounds[0]), resolution)
         max_t = round_near(bounds[1], resolution)
-        step = (max_t - min_t) / resolution
-        return np.arange(min_t, max_t, resolution) #Changed to Arange to achieve desired steps
+        return np.arange(min_t, max_t, resolution)
+        # Changed to Arange to achieve desired steps
 
     x_space = gen_lin(bounds_x).tolist()
     y_space = gen_lin(bounds_y).tolist()
@@ -37,11 +52,13 @@ def grid_cloud_within_volume(shape, resolution=.25):
     cloud_list = list(itertools.product(*[x_space, y_space, z_space]))
     cloud = np.array(cloud_list)
 
-    #Prune Cloud by erasing points known to be outside the volume of the alpha shape
+    # Prune Cloud by erasing points known to be
+    # outside the volume of the alpha shape
     print('Initial Coud Size:' + str(len(cloud)))
     pruned_cloud = inside_alpha_shape(shape, cloud)
     print('Pruned Cloud Size:' + str(len(pruned_cloud)))
     return pruned_cloud
+
 
 def ignore_close_points(seen_points, empty_results, test_point, minimum_dist):
     """
@@ -58,13 +75,15 @@ def ignore_close_points(seen_points, empty_results, test_point, minimum_dist):
 
     """
     continuance = False
-    #If we're ignoring the point, we do need to supply an empty result to not break later analysis
+    # If we're ignoring the point, we do need to
+    # supply an empty result to not break later analysis
     for point in seen_points:
         if fsr.distance(point, test_point) < minimum_dist:
             empty_results.append(process_empty(test_point))
             continuance = True
             break
     return continuance, empty_results
+
 
 def gen_manip_sphere(manip_resolution):
     """
@@ -138,7 +157,8 @@ def find_bounds_workspace(work_space):
     z_max = (z_max_dim * (1 / z_min_prox))
     print('Creating Graph Skeleton')
 
-    if not np.isclose(x_min_prox, z_min_prox, 0.01) and not np.isclose(y_min_prox, z_min_prox):
+    if (not np.isclose(x_min_prox, z_min_prox, 0.01) and not
+            np.isclose(y_min_prox, z_min_prox)):
         print('Grid is not cubic')
         print([x_min_prox, y_min_prox, z_min_prox])
         return None, None, None
@@ -153,6 +173,7 @@ def find_bounds_workspace(work_space):
 
     bounds = [x_bound, y_bound, z_bound]
     return real_bounds, bounds, (x_min_prox + y_min_prox + z_min_prox)/3
+
 
 def convert_to_json(results, json_file_name):
     """
@@ -238,6 +259,7 @@ def score_point(score):
         col = 'red'
     return col
 
+
 def score_point_div(score):
     """
     Scores a point for use in plotting.
@@ -286,9 +308,9 @@ def complete_trajectory(point_list, point_interpolation_dist, point_interpolatio
     if point_interpolation_dist > 0:
         new_points = []
         point_list_len = len(point_list)
-        start = time.time()
         for i in range(point_list_len):
-            if i == point_list_len - 1:  # Add the last point, ensuring at least one point
+            if i == point_list_len - 1:
+                # Add the last point, ensuring at least one point
                 new_points.append(point_list[i])
                 continue
             start_point = point_list[i]
@@ -297,15 +319,16 @@ def complete_trajectory(point_list, point_interpolation_dist, point_interpolatio
             if distance < point_interpolation_dist:
                 continue
             while distance > point_interpolation_dist:
-                # Linear gap closes by directly interpolating between waypoints and scaling by
-                #   a distance, creating a linear path.
-                # Arc gap creates a more curved or 'arced' trajectory from waypoints A to B
+                # Linear gap closes by directly interpolating between waypoints
+                # and scaling by a distance, creating a linear path.
+                # Arc gap creates a more curved or
+                # 'arced' trajectory from waypoints A to B
                 if point_interpolation_mode == 1:
                     start_point = fsr.closeLinearGap(start_point, end_point,
-                                               point_interpolation_dist)
+                            point_interpolation_dist)
                 else:
                     start_point = fsr.closeArcGap(start_point, end_point,
-                                             point_interpolation_dist)
+                            point_interpolation_dist)
                 distance = fsr.arcDistance(start_point, end_point)
                 new_points.append(start_point)
         point_list = new_points
@@ -334,6 +357,7 @@ def load_point_cloud_from_file(fname):
         for line in lines:
             tms.append(tm([safe_float(item.strip()) for item in line[1:-2].strip().split(',')]))
         return tms
+
 
 def post_flag(flag, cmds):
     """

@@ -1,26 +1,24 @@
 # Utility Imports
 from datetime import datetime
-import itertools
-import math
 import multiprocessing as mp
 import numpy as np
 import os
 import scipy as sci
-import sys
 import time
 
 #This module imports
 import workspace_constants
 from alpha_shape import AlphaShape
-from workspace_helper_functions import WaitText, wait_for, complete_trajectory
+from workspace_helper_functions import wait_for, complete_trajectory
 from workspace_helper_functions import ignore_close_points, gen_manip_sphere
 from workspace_helper_functions import grid_cloud_within_volume
+from workspace_helper_functions import process_empty
 
-from moller_trumbore import moller_trumbore_ray_intersection, moller_trumbore_ray_intersection_array
-from moller_trumbore import chunk_moller_trumbore, inside_alpha_shape, alpha_intersection
+from moller_trumbore import inside_alpha_shape
 
 # Other module imports
-from basic_robotics.robot_collisions import createMesh, ColliderManager, ColliderArm, ColliderObstacles
+from basic_robotics.robot_collisions import createMesh, ColliderManager
+from basic_robotics.robot_collisions import ColliderArm, ColliderObstacles
 from basic_robotics.general import tm, fsr
 from basic_robotics.utilities.disp import disp, progressBar
 
@@ -123,18 +121,6 @@ def calculate_manipulability_score(bot, theta):
     manipulability_ratio_v = 1 / (np.sqrt(max(av_eig)) / np.sqrt(min(av_eig)))
     #disp(manipulability_ratio_v)
     return manipulability_ratio_v, manipulability_ratio_w
-
-
-def process_empty(p):
-    """
-    Helper function for multiprocessing. Literally returns empty.
-    Args:
-        p: Point
-    Returns:
-        [p, 0, [], [], []]
-    """
-    return [p, 0, [], [], []]
-
 
 def get_collision_data(collision_manager):
     """

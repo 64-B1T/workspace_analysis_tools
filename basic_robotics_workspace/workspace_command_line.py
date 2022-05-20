@@ -1,20 +1,21 @@
 #!/usr/bin/env python
 
-#Utility Imports
+# Utility Imports
 import importlib
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import numpy as np
 import pickle
 import sys
+import os
 
-#Other Module Imports
+# Other Module Imports
 from basic_robotics.general import tm
 from basic_robotics.plotting.Draw import DrawRectangle, DrawAxes, drawMesh
 from basic_robotics.kinematics import loadArmFromURDF
 from basic_robotics.utilities.disp import disp, progressBar
 
-#This Module Imports
+# This Module Imports
 import workspace_constants
 from robot_link import RobotLink
 from alpha_shape import AlphaShape
@@ -138,6 +139,7 @@ class CommandExecutor:
         self.analyzer = None
         self.ready = False
         self.done = False
+        self.cmd_pass = False
         self.exhaustive_pose_cloud = None
         self.functional_pose_cloud = None
         self.pose_results_6dof_shells = None
@@ -222,14 +224,17 @@ class CommandExecutor:
         -fromURDF loads from a URDF file using modern_robotics/faser_robotics
         -fromPyFile loads from a user-defined python file specifying the robot
             see the example_robot_module.py file for additional details
+        if neither are specified, it is assumed to load from urdf
         """
-        if cmd_flag_from_urdf in cmds:
-            file_name = post_flag(cmd_flag_from_urdf, cmds)
-            link = self.load_robot_from_urdf(file_name)
         if cmd_flag_from_directory in cmds and cmd_flag_from_file in cmds:
             dir_name = post_flag(cmd_flag_from_directory, cmds)
             file_name = post_flag(cmd_flag_from_file, cmds)
             link = self.load_robot_from_module(dir_name, file_name)
+        elif cmd_flag_from_urdf in cmds:
+            file_name = post_flag(cmd_flag_from_urdf, cmds)
+            link = self.load_robot_from_urdf(file_name)
+        else:
+            link = self.load_robot_from_urdf(cmds[1])
         self.analyzer = WorkspaceAnalyzer(link)
         self.ready = True
         return link
@@ -418,8 +423,8 @@ class CommandExecutor:
                 for k in range(counters_max[2]):
                     sub = points_array[i][j][k]
                     r = 0.5
-                    new_list_count+=1
-                    if not isinstance(sub[0], list) and not isinstance(sub[1], list):
+                    if (not isinstance(sub[0], list)
+                            and not isinstance(sub[1], list)):
                         continue
                     if not isinstance(sub[0], list):
                         r = 0.5 + sub[1][1]/2
@@ -481,7 +486,6 @@ class CommandExecutor:
         if save_output:
             self.save_to_file(results, out_file_name)
         return results
-
 
     def cmd_analyze_total_workspace_exhaustive(self, cmds):
         """
@@ -982,8 +986,18 @@ class CommandExecutor:
             cmd: command string passed in
         """
         cmds_parsed = self.cmd_prepare(cmd)
-        if not cmds_parsed[0] in valid_commands:
+        if not cmds_parsed[0] in valid_commands and not self.cmd_pass:
             disp('Unrecognized command. Please try again. You can use \'help\' for help')
+            disp('Would you like to enable command pass-through?')
+            answer = input('(Y/N)>')
+            if answer.strip().lower() == 'y':
+                self.cmd_pass = True
+            return
+        if not cmds_parsed[0] in valid_commands and self.cmd_pass:
+            if cmds_parsed[0] == 'cd' or cmd[1] == ":":
+                os.chdir(cmds_parsed[1])
+            else:
+                os.system(cmd)
             return
         if cmds_parsed[0] == cmd_str_help:
             self.cmd_help(cmds_parsed)
@@ -1046,6 +1060,7 @@ class WorkspaceCommandLine(CommandExecutor):
         self.analyzer = None
         self.ready = False
         self.done = False
+        self.cmd_pass = False
         self.exhaustive_pose_cloud = None
         self.functional_pose_cloud = None
         self.pose_results_6dof_shells = None

@@ -36,7 +36,8 @@ def view_workspace(image,
     plt.show()
 
 
-def draw_square(point, dims, excluded=2, col='darkred', axis_2=None):
+def draw_square(point, dims, excluded=2, col='darkred', axis_2=None,
+        transparency_constant = workspace_constants.TRANSPARENCY_CONSTANT):
     """
     Draw a 2D Square for slicing.
 
@@ -58,7 +59,8 @@ def draw_square(point, dims, excluded=2, col='darkred', axis_2=None):
         zs = np.array([f, f, f, f])
         verts = [list(zip(xs, ys, zs))]
         axis_2.add_collection3d(
-            Poly3DCollection(verts, facecolors=col, alpha=workspace_constants.TRANSPARENCY_CONSTANT))
+            Poly3DCollection(verts, facecolors=col,
+                alpha=transparency_constant))
     elif excluded == 1:
         vert_1 = point[0] - dims[0] / 2
         vert_2 = point[0] + dims[0] / 2
@@ -70,7 +72,8 @@ def draw_square(point, dims, excluded=2, col='darkred', axis_2=None):
         ys = np.array([f, f, f, f])
         verts = [list(zip(xs, ys, zs))]
         axis_2.add_collection3d(
-            Poly3DCollection(verts, facecolors=col, alpha=workspace_constants.TRANSPARENCY_CONSTANT))
+            Poly3DCollection(verts, facecolors=col,
+                alpha=transparency_constant))
     elif excluded == 0:
         vert_1 = point[1] - dims[0] / 2
         vert_2 = point[1] + dims[0] / 2
@@ -82,7 +85,8 @@ def draw_square(point, dims, excluded=2, col='darkred', axis_2=None):
         xs = np.array([f, f, f, f])
         verts = [list(zip(xs, ys, zs))]
         axis_2.add_collection3d(
-            Poly3DCollection(verts, facecolors=col, alpha=workspace_constants.TRANSPARENCY_CONSTANT))
+            Poly3DCollection(verts, facecolors=col,
+                alpha=transparency_constant))
 
 
 class WorkspaceViewer:
@@ -105,6 +109,7 @@ class WorkspaceViewer:
             alpha_file_name: [Optional boolean] filename of the optional alpha-shape
             plot_3d_slice: [Optional boolean] create a 3d rendered workspace slice graph
         """
+        self.transparency_constant = workspace_constants.TRANSPARENCY_CONSTANT
         self.file_name = file_name
         print('Loading Data')
         with open(self.file_name, 'rb') as fp:
@@ -262,20 +267,23 @@ class WorkspaceViewer:
                 if score <= .001:
                     continue
                 col = score_point(score)
-                draw_square([x, y, zi], [1, 1], 2, col, self.axis_2)
+                draw_square([x, y, zi], [1, 1], 2, col,
+                    self.axis_2, self.transparency_constant)
             for z in range(s[2]):
                 score = self.cloud_data[x, yi, z]
                 if score <= .001:
                     continue
                 col = score_point(score)
-                draw_square([x, yi, z], [1, 1], 1, col, self.axis_2)
+                draw_square([x, yi, z], [1, 1], 1, col,
+                    self.axis_2, self.transparency_constant)
         for y in range(s[1]):
             for z in range(s[2]):
                 score = self.cloud_data[xi, y, z]
                 if score <= .001:
                     continue
                 col = score_point(score)
-                draw_square([xi, y, z], [1, 1], 0, col, self.axis_2)
+                draw_square([xi, y, z], [1, 1], 0, col,
+                    self.axis_2, self.transparency_constant)
 
     def plot_3d_slices(self):
         """
