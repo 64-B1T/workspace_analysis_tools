@@ -11,9 +11,11 @@ import os
 
 # Other Module Imports
 from basic_robotics.general import tm
-from basic_robotics.plotting.Draw import DrawRectangle, DrawAxes, drawMesh
+from basic_robotics.plotting.vis_matplotlib import drawRectangle, drawAxes, drawMesh
 from basic_robotics.kinematics import loadArmFromURDF
 from basic_robotics.utilities.disp import disp, progressBar
+from basic_robotics.collisions import createMesh, createBox, ColliderManager
+from basic_robotics.collisions import ColliderArm, ColliderObstacles
 
 # This Module Imports
 import workspace_constants
@@ -30,6 +32,7 @@ done = False
 cmd_str_help = 'help'
 cmd_str_exit = 'exit'
 cmd_str_load_robot = 'loadRobot'
+cmd_str_add_obstacle = 'addObstacle'
 cmd_str_fuse_manipulability = 'fuseManipulabilityFiles'
 cmd_str_analyze_task_manipulability = 'analyzeTaskSpaceManipulability'
 cmd_str_analyze_total_workspace_exhaustive = 'exhaustiveMethodTotalWorkspace'
@@ -55,6 +58,7 @@ valid_commands = [
     cmd_str_help,
     cmd_str_exit,
     cmd_str_load_robot,
+    cmd_str_add_obstacle,
     cmd_str_analyze_task_manipulability,
     cmd_str_fuse_manipulability,
     cmd_str_analyze_total_workspace_exhaustive,
@@ -86,6 +90,7 @@ cmd_flag_parallel = '-parallel'
 cmd_flag_manip_res = '-manipulationResolution'
 cmd_flag_jacobian_manip = '-useJacobian'
 cmd_flag_collision_detect = '-checkCollisions'
+cmd_flag_origin = '-origin'
 
 # Robot Loading Flags
 cmd_flag_from_urdf = '-fromURDF'
@@ -137,11 +142,18 @@ cmd_flag_var_dof_offset = '-dofOffset'
 cmd_flag_var_alpha_value = '-alphaVal'
 cmd_flag_var_max_dist = '-maxDist'
 
+#Add Obstacle Commands
+cmd_flag_obstacle_add_prism = '-prism'
+cmd_flag_obstacle_add_mesh = '-mesh'
+cmd_flag_obstacle_name = '-name'
+
 class CommandExecutor:
     """Superclass for workspace command line, to enable use in other applications more easily"""
 
     def __init(self):
         """Initialize Command Executor"""
+        self.persistent_collider = None
+        self.obstacle_group = None
         self.analyzer = None
         self.ready = False
         self.done = False
@@ -193,8 +205,8 @@ class CommandExecutor:
         def do_ik(x):
             return link.robot.IK(x, protect=True)
 
-        def get_jt():
-            return link.robot.getJointTransforms()
+        def get_jt(*args):
+            return link.robot.getJointTransforms(*args)
 
         link.bind_ee(get_ee)
         link.bind_fk(do_fk)
@@ -205,8 +217,8 @@ class CommandExecutor:
 
         #Collision Support
         link.link_names = arm.link_names
-        link.vis_props = arm.vis_props
-        link.col_props = arm.col_props
+        link.vis_props = arm._vis_props
+        link.col_props = arm._col_props
         return link
 
     def load_robot_from_module(self, dir_name, file_name):
@@ -218,7 +230,8 @@ class CommandExecutor:
         Returns:
             RobotLink: Resulting RobotLink Object
         """
-        sys.path.append(dir_name)
+        if dir_name is not None:
+            sys.path.append(dir_name)
         file_name_sanitized = file_name.replace('.py', '')
         temp_module = importlib.import_module(file_name_sanitized)
         return temp_module.load_arm()
@@ -232,8 +245,10 @@ class CommandExecutor:
             see the example_robot_module.py file for additional details
         if neither are specified, it is assumed to load from urdf
         """
-        if cmd_flag_from_directory in cmds and cmd_flag_from_file in cmds:
-            dir_name = post_flag(cmd_flag_from_directory, cmds)
+        if cmd_flag_from_file in cmds:
+            dir_name = None
+            if cmd_flag_from_directory in cmds:
+                dir_name = post_flag(cmd_flag_from_directory, cmds)
             file_name = post_flag(cmd_flag_from_file, cmds)
             link = self.load_robot_from_module(dir_name, file_name)
         elif cmd_flag_from_urdf in cmds:
@@ -300,7 +315,7 @@ class CommandExecutor:
                 if min > max(j[1]):
                     min = max(j[1])
             col = score_point(1 - min)
-            DrawRectangle(
+            drawRectangle(
                 tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
                 [grid_rez]*3, ax, c=col, a=workspace_constants.TRANSPARENCY_CONSTANT)
         plt.show()
@@ -339,10 +354,60 @@ class CommandExecutor:
                 col = score_point(score)
             elif type == 2:
                 col = score_point_div(score)
-            DrawRectangle(
+            drawRectangle(
                 tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
                 [grid_rez]*3, ax, c=col, a=workspace_constants.TRANSPARENCY_CONSTANT)
         plt.show()
+
+    def cmd_add_obstacle(self, cmds):
+        """
+        Allow a user to add a persistent obstacle or obstacles for consideration in workspace analysis.
+
+        -prism Create a new rectangular prism. -prism 0 1 2 (followed by prism dimensions)
+        -mesh Create a new stl mesh. -mesh [filename]
+        -name Name of the new created object. -name generic_object
+        -origin Origin of obstacle. -origin 0 1 2 3 4 5 (tm format)
+        """
+        if self.persistent_collider is None:
+            self.persistent_collider = ColliderManager()
+            self.obstacle_group = ColliderObstacles()
+            print(self.analyzer.bot._col_props)
+            print(self.analyzer.bot._vis_props)
+            self.persistent_collider.bind(ColliderArm(self.analyzer.bot, 'model'))
+            self.persistent_collider.bind(self.obstacle_group)
+        
+        obstacle_origin = tm()
+        obstacle_name = 'generic_obstacle'
+        if cmd_flag_obstacle_name in cmds:
+            obstacle_name = post_flag(cmd_flag_obstacle_name, cmds)
+        if cmd_flag_origin in cmds:
+            transform_origin_xt = post_flag(cmd_flag_origin, cmds, 1)
+            transform_origin_yt = post_flag(cmd_flag_origin, cmds, 2)
+            transform_origin_zt = post_flag(cmd_flag_origin, cmds, 3)
+            transform_origin_xr = post_flag(cmd_flag_origin, cmds, 4)
+            transform_origin_yr = post_flag(cmd_flag_origin, cmds, 5)
+            transform_origin_zr = post_flag(cmd_flag_origin, cmds, 6)
+
+            obstacle_origin = tm([
+                float(transform_origin_xt.strip()),
+                float(transform_origin_yt.strip()),
+                float(transform_origin_zt.strip()),
+                float(transform_origin_xr.strip()),
+                float(transform_origin_yr.strip()),
+                float(transform_origin_zr.strip())])
+
+        if cmd_flag_obstacle_add_prism in cmds:
+            dim_x = post_flag(cmd_flag_obstacle_add_prism, cmds, 1)
+            dim_y = post_flag(cmd_flag_obstacle_add_prism, cmds, 2)
+            dim_z = post_flag(cmd_flag_obstacle_add_prism, cmds, 3)
+
+            new_mesh = createBox(obstacle_origin, [dim_x, dim_y, dim_z])
+            self.obstacle_group.addMesh(obstacle_name, new_mesh)
+            #self.obstacle_group.update_component(obstacle_name, obstacle_origin)
+        
+        if cmd_flag_obstacle_add_mesh in cmds:
+            new_mesh = createMesh(obstacle_origin, post_flag(cmd_flag_obstacle_add_mesh))
+            self.obstacle_group.addMesh(obstacle_name, new_mesh)
 
     def cmd_compare_manipulability_space(self, cmds):
         """
@@ -483,8 +548,12 @@ class CommandExecutor:
         save_output, out_file_name = self.save_results_flag(cmds)
         plot = cmd_flag_plot_results in cmds
 
-        results = self.analyzer.analyze_task_space_manipulability(point_list,
-                manip_resolution, parallel, use_jacobian, collision_detect)
+        if collision_detect:
+            results = self.analyzer.analyze_task_space_manipulability(point_list,
+                    manip_resolution, parallel, use_jacobian, self.persistent_collider)
+        else:
+            results = self.analyzer.analyze_task_space_manipulability(point_list,
+                    manip_resolution, parallel, use_jacobian, None)
 
         self.pose_results_manipulability_volume = results
         if plot:
@@ -644,7 +713,7 @@ class CommandExecutor:
                     continue
                 else:
                     col = score_point(score)
-                    DrawRectangle(tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
+                    drawRectangle(tm([r[0][0], r[0][1], r[0][2], 0, 0, 0]),
                         [.25] * 3, ax, c=col, a=workspace_constants.TRANSPARENCY_CONSTANT)
             drawMesh(mesh, ax)
             plt.show()
@@ -661,10 +730,12 @@ class CommandExecutor:
         -o: output file, if desired
         -gridResolution: desired grid resolution in meters. defaults to .25m
         -manipResolution: desired manipulation resolution (number of unit sphere points) Default 25
-        -parallel: Calculate in parallel for increased efficiency. Default false
+        -checkCollisions: enable collision checking. INCOMPATIBLE WITH PARALLEL PROCESSING.
+        -parallel: Calculate in parallel for increased efficiency. Default false INCOMPATIBLE WITH COLLISION CHECKING
         -useJacobian: use jacobian optimization instead of unit sphere.
             Faster, but may give less info. Default false
         -plot: displays a basic plot of the results
+        
         """
         shape_fname = ''
         shape = None
@@ -700,8 +771,13 @@ class CommandExecutor:
         collision_detect = cmd_flag_collision_detect in cmds
         use_jacobian = cmd_flag_jacobian_manip in cmds
         plot = cmd_flag_plot_results in cmds
-        results = self.analyzer.analyze_manipulability_within_volume(
+        if collision_detect:
+            results = self.analyzer.analyze_manipulability_within_volume(
+            shape, grid_resolution, manip_resolution, parallel, use_jacobian, self.persistent_collider)
+        else:
+            results = self.analyzer.analyze_manipulability_within_volume(
             shape, grid_resolution, manip_resolution, parallel, use_jacobian, collision_detect)
+
         if plot:
             self.plot_manipulability_grid(results, grid_resolution)
         if save_output:
@@ -755,7 +831,7 @@ class CommandExecutor:
             plt.figure()
             ax = plt.axes(projection='3d')
             for r in results:
-                DrawAxes(r[0], r[1] / 2, ax)
+                drawAxes(r[0], r[1] / 2, ax)
                 ax.scatter3D(r[0][0], r[0][1], r[0][2], c=score_point(r[1]), s=25)
             plt.show()
         if save_output:
@@ -963,7 +1039,7 @@ class CommandExecutor:
             ax = plt.axes(projection='3d')
             for traj in results:
                 for r in traj[2]:
-                    DrawAxes(r[0], r[1] / 2, ax)
+                    drawAxes(r[0], r[1] / 2, ax)
                     ax.scatter3D(r[0][0], r[0][1], r[0][2], c=score_point(r[1]), s=25)
             plt.show()
         if save_output:
@@ -999,6 +1075,8 @@ class CommandExecutor:
             if answer.strip().lower() == 'y':
                 self.cmd_pass = True
             return
+        if len(cmd) < 2:
+            return
         if not cmds_parsed[0] in valid_commands and self.cmd_pass:
             if cmds_parsed[0] == 'cd' or cmd[1] == ":":
                 os.chdir(cmds_parsed[1])
@@ -1029,11 +1107,14 @@ class CommandExecutor:
         elif cmds_parsed[0] == cmd_str_load_robot:
             self.cmd_load_robot(cmds_parsed)
             return
+       
         if not self.ready:
             disp('Please load a robot first')
             return
         if cmds_parsed[0] == cmd_str_analyze_total_workspace_exhaustive:
             return self.cmd_analyze_total_workspace_exhaustive(cmds_parsed)
+        elif cmds_parsed[0] == cmd_str_add_obstacle:
+            self.cmd_add_obstacle(cmds_parsed)
         elif cmds_parsed[0] == cmd_str_analyze_task_manipulability:
             return self.cmd_analyze_task_manipulability(cmds_parsed)
         elif cmds_parsed[0] == cmd_str_analyze_total_workspace_alpha:
@@ -1073,6 +1154,8 @@ class WorkspaceCommandLine(CommandExecutor):
         self.pose_results_object_surface = None
         self.pose_results_manipulability_volume = None
         self.pose_results_manipulability_trajectory = None
+        self.persistent_collider = None 
+        self.obstacle_group = None
         self.sequence = []
         self.set_sequence_at_launch(args)
         self.main_loop()
@@ -1167,6 +1250,8 @@ class WorkspaceCommandLine(CommandExecutor):
                 disp('Exits the program')
             elif cmds[1] == cmd_str_load_robot:
                 disp(self.cmd_load_robot.__doc__)
+            elif cmds[1] == cmd_str_add_obstacle:
+                disp(self.cmd_add_obstacle.__doc__)
             elif cmds[1] == cmd_str_analyze_task_manipulability:
                 disp(self.cmd_analyze_task_manipulability.__doc__)
             elif cmds[1] == cmd_str_analyze_total_workspace_exhaustive:

@@ -20,8 +20,8 @@ class RobotLink:
 
         #Support for Collision Checking
         self.link_names = None
-        self.vis_props = None #Used as a backup if col props unavailable
-        self.col_props = None #Populate first
+        self._vis_props = robot._vis_props #Used as a backup if col props unavailable
+        self._col_props = robot._col_props #Populate first
         #Col/Vis Props Format:
         #[[type, origin, properties],[]]
         #[['msh', [0, 0, 0, 0, 0, 0], ['../example_mesh', 1.0]]]
@@ -121,7 +121,7 @@ class RobotLink:
         """
         return self.ee_func()
 
-    def getJointTransforms(self):
+    def getJointTransforms(self, *args):
         """
         Get Joint Transforms
 
@@ -130,9 +130,10 @@ class RobotLink:
         Returns:
             Transformation Matrix of Joints
         """
-        return self.JTFunc()
+        return self.JTFunc(*args)
 
     def jacobianBody(self, theta):
+        """Get body jacobian."""
         return self.get_jacobian_body(theta)
 
     def get_jacobian_body(self, theta):

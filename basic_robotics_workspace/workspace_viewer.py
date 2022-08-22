@@ -1,11 +1,14 @@
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-import numpy as np
-import workspace_constants
+import math
 import pickle
+import numpy as np
+import matplotlib.pyplot as plt
+import workspace_constants
+
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from alpha_shape import AlphaShape
 from workspace_helper_functions import score_point, sort_cloud
 from basic_robotics.utilities.disp import progressBar
+
 
 def view_workspace(image,
                   draw_alpha_shape=False,
@@ -238,7 +241,7 @@ class WorkspaceViewer:
         self.scalars = [x_min_prox, y_min_prox, z_min_prox]
         # self.ax[0,0].axis(scalex = x_min_prox, scaley = y_min_prox)
 
-        sliced = np.zeros((y_bound, x_bound, z_bound))
+        sliced = np.zeros((y_bound+1, x_bound+1, z_bound+1))
         for i in range(workspace_len):
             progressBar(i, workspace_len - 1, prefix='Organizing Data')
             pd = self.work_space[i]

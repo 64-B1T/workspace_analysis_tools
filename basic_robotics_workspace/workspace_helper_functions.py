@@ -94,8 +94,8 @@ def gen_manip_sphere(manip_resolution):
         sphere: points in sphere
         true_rez: the true number of points in the sphere
     """
-    sphr, _ = fsr.unitSphere(manip_resolution)
-    sphr.append([0, 0, 0])
+    sphr = fsr.fiboSphere(manip_resolution)
+    np.vstack((np.array([0, 0, 0]), sphr))
     sphere = np.array(sphr) * np.pi
     true_rez = len(sphere)
     return sphere, true_rez
@@ -360,17 +360,18 @@ def load_point_cloud_from_file(fname):
         return tms
 
 
-def post_flag(flag, cmds):
+def post_flag(flag, cmds, next_ind = 1):
     """
     Return the argument of a specified flag in a list of commands.
 
     Args:
         flag: string to seach for
         cmds: list of strings
+        next_ind: index to increment by
     Returns:
         argument to flag
     """
-    return cmds[cmds.index(flag) + 1]
+    return cmds[cmds.index(flag) + next_ind]
 
 
 def sort_cloud(cloud):

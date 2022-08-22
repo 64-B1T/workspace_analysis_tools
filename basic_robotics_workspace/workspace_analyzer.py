@@ -17,8 +17,8 @@ from workspace_helper_functions import process_empty
 from moller_trumbore import inside_alpha_shape
 
 # Other module imports
-from basic_robotics.robot_collisions import createMesh, ColliderManager
-from basic_robotics.robot_collisions import ColliderArm, ColliderObstacles
+from basic_robotics.collisions import createMesh, ColliderManager
+from basic_robotics.collisions import ColliderArm, ColliderObstacles
 from basic_robotics.general import tm, fsr
 from basic_robotics.utilities.disp import disp, progressBar
 
@@ -498,7 +498,7 @@ class WorkspaceAnalyzer:
         return num_successful, successful_poses
 
     def analyze_task_space_manipulability(self, desired_poses,
-            manip_resolution=25, parallel=False, use_jacobian=False, collision_detect=False):
+            manip_resolution=25, parallel=False, use_jacobian=False, collision_detect=None):
         """
         Given a cloud of points, determine manipulability at each point
         Args:
@@ -506,7 +506,7 @@ class WorkspaceAnalyzer:
             manip_resolution: approximate number of points on surface of unit sphere to try
             parallel: whether or not to use parallel computation
             use_jacobian: whether or not to use jacobian computation instead of unit sphere
-            collision_detect: [Optional Bool] detect collisions (Default False)
+            collision_detect: [Optional Bool] detect collisions (Default False) If not parallel, can be a passed manager object.
         Returns:
             Results: [[Point, success_percentage, successful_orientations],[...],...]
         """
@@ -516,15 +516,16 @@ class WorkspaceAnalyzer:
         results = []
 
         sphere, true_rez = gen_manip_sphere(manip_resolution)
-        collision_manager = None
 
         start = time.time()
+        do_collide = False
+        if collision_detect is not None and collision_detect is not False:
+                do_collide = True 
+        
         if parallel and num_poses > 8 * self.num_procs:  # Is it *really* worth parallelism?
             results = self.parallel_process_point_cloud(num_poses, desired_poses, sphere, true_rez,
-                    use_jacobian=use_jacobian, collision_detect=False)
+                    use_jacobian=use_jacobian, collision_detect=do_collide)
         else:
-            if collision_detect:
-                collision_manager = setup_collision_manager(self.bot)
             for i in range(num_poses):
                 progressBar(i,
                             last_iter,
@@ -532,7 +533,7 @@ class WorkspaceAnalyzer:
                             ETA=start)
                 results.append(process_point(
                         desired_poses[i], sphere, true_rez, self.bot,
-                        use_jacobian, collision_detect, collision_manager))
+                        use_jacobian, do_collide, collision_detect))
         end = time.time()
         disp(end - start, 'Elapsed')
         return results
@@ -825,7 +826,7 @@ class WorkspaceAnalyzer:
         """
         shell_radii = np.linspace(0, shell_range, num_shells)
         shells = ([[[y * rad for y in x]
-                    for x in fsr.unitSphere(points_per_shell)[0]]
+                    for x in fsr.fiboSphere(points_per_shell)]
                    for rad in shell_radii])
         results = []
         i = 0
